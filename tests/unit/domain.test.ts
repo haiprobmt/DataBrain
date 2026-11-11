@@ -114,6 +114,16 @@ describe("local requirement extraction", () => {
     expect(result.missing.every((m) => m.question.endsWith("?"))).toBe(true);
   });
 
+  it("does not mistake where the data comes from for the target platform", async () => {
+    const result = await llm.extractRequirements("Source systems are an on-premises SQL Server database and files on AWS S3. We are replacing the legacy Synapse warehouse. The target platform is Microsoft Fabric on Azure.");
+    expect(result.facts.find((f) => f.field === "target_platform")?.tokens.sort()).toEqual(["azure", "fabric"]);
+    const migrating = await llm.extractRequirements("We are migrating to Snowflake from an existing Teradata warehouse.");
+    expect(migrating.facts.find((f) => f.field === "target_platform")?.tokens).toEqual(["snowflake"]);
+    const none = await llm.extractRequirements("Sources are Oracle and SAP, both on-premises.");
+    expect(none.facts.find((f) => f.field === "target_platform")).toBeUndefined();
+    expect(none.missing.map((m) => m.field)).toContain("target_platform");
+  });
+
   it("does not read 'near real-time' as real-time", () => {
     expect(tokensForField("latency", "near real-time refresh")).toEqual(["near-real-time"]);
     expect(tokensForField("latency", "real-time streaming")).toEqual(["real-time"]);

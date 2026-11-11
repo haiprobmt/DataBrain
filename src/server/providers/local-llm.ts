@@ -19,6 +19,9 @@ const REGEX_FIELDS: { field: string; pattern: RegExp; confidence: number }[] = [
   { field: "constraints", pattern: /\b(?:must not|cannot|can't|constraint|constrained|restricted to|only allowed|existing (?:contract|licen[cs]e|agreement)|enterprise agreement)\b/i, confidence: 0.55 },
 ];
 
+const SOURCE_CUE = /\b(source systems?|sources? (?:are|is|include[sd]?)|data sources?|(?:from|replac\w+|retir\w+|decommission\w*) (?:an? |the |our )?(?:existing|legacy|current|old|on[- ]?prem\w*))\b/i;
+const TARGET_CUE = /\b(target|destination|move to|moving to|migrat\w+ to|platform (?:is|will be)|deploy\w* (?:on|to)|standardi[sz]\w+ on)\b/i;
+
 /**
  * Deterministic requirement extraction: vocabulary and pattern matching over the user's own text.
  * It records the sentence each fact came from and lists every field it found nothing for.
@@ -37,6 +40,8 @@ export class LocalRulesProvider implements LLMProvider {
       const hits: VocabEntry[] = [];
       const evidence: string[] = [];
       for (const sentence of sentences) {
+        // A sentence that describes where data comes from says nothing about the target platform.
+        if (field === "target_platform" && SOURCE_CUE.test(sentence) && !TARGET_CUE.test(sentence)) continue;
         const found = groups.flatMap((g) => matchGroup(g, sentence));
         const fresh = found.filter((f) => !hits.some((h) => h.token === f.token));
         if (fresh.length > 0) {
