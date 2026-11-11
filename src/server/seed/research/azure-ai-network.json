@@ -1,1 +1,633 @@
-{"cluster":"azure-ai-network","researchedOn":"2026-11-11","items":[],"newItems":[]}
+{
+  "cluster": "azure-ai-network",
+  "researchedOn": "2026-11-11",
+  "items": [
+    {
+      "slug": "azure-rag-knowledge-assistant",
+      "summary": "A retrieval-augmented generation assistant on Azure: documents are chunked, embedded and indexed in Azure AI Search; an application runs a hybrid (keyword plus vector) query, filtered to what the user may read, and sends the best passages to an Azure OpenAI model in Microsoft Foundry Models, which answers with citations.",
+      "sections": {
+        "context": "Staff need answers drawn from internal documents, with citations, without exposing content beyond each user's permissions. A language model on its own does not know private or recent content, so the application retrieves relevant passages first and asks the model to answer from them.\n\nMicrosoft now documents the model service as Azure OpenAI in Microsoft Foundry Models, part of Microsoft Foundry (previously Azure AI Foundry, before that Azure AI Studio). Existing Azure OpenAI resources keep working and can be upgraded to the Foundry resource type. The Azure Architecture Center's baseline Microsoft Foundry chat reference architecture is the closest official blueprint for the network and identity design.",
+        "concepts": "- **Chunk**: a passage small enough for the embedding and chat models' input limits and focused enough to be retrieved precisely.\n- **Embedding**: a vector for a chunk or a question. Use the same embedding model for indexing and querying.\n- **Hybrid search**: one request that runs a full-text query and a vector query and merges the results.\n- **Semantic ranker**: an optional re-ranking step that re-scores results by meaning. It is billed separately.\n- **Security filter**: a filter on a field holding user or group identifiers, applied to every query so users only retrieve documents they may read.\n- **Grounding**: instructing the model to answer only from the retrieved passages and cite them.",
+        "how-it-works": "**Indexing.** Documents are read from their sources, cracked into text, split into chunks, embedded and written to a search index together with source metadata and permission identifiers. Azure AI Search can do this itself with integrated vectorization (an indexer plus a skillset that chunks and calls an embedding model), or the application can chunk and embed externally and push the results.\n\n**Answering.** The user signs in. The orchestration service runs a hybrid query, optionally with semantic ranking, and adds a security filter built from the user's identity and groups. The top passages go to the chat model with instructions to answer from them and cite them. Microsoft's guidance is that hybrid search with semantic ranking gives the best relevance for this classic pattern. Azure AI Search also documents an agentic retrieval pipeline for complex questions; check its release status before relying on it.",
+        "implementation": "1. Agree the document sources, owners and access rules, and collect representative documents and test questions.\n2. Create the Foundry (or Azure OpenAI) resource with a chat deployment and an embedding deployment; pick a deployment type that meets data-processing location rules.\n3. Create the search service; enable role-based access; design the index with text, vector, metadata and permission fields.\n4. Build ingestion: extract, chunk, embed, index. Decide between integrated vectorization and your own pipeline.\n5. Build the orchestration service: hybrid query, security filter, prompt, citations.\n6. Add private endpoints, private DNS and disable public network access on each service.\n7. Evaluate on the test set, then add monitoring, feedback capture and content filtering.",
+        "prerequisites": "- An Azure subscription with access to the required models in a region and deployment type you are allowed to use. Model availability differs by region and deployment type; check current documentation.\n- A virtual network (usually a spoke in a landing zone) with DNS resolution for private endpoints, if private networking is required.\n- Microsoft Entra ID for user sign-in and groups that reflect document permissions.\n- Read access to the document sources and agreement from their owners on what may be indexed.\n- A set of test questions with expected answers and source documents.",
+        "best-practices": "- Use hybrid queries rather than vector-only queries, and test whether semantic ranking improves your results.\n- Experiment with chunking. The Architecture Center treats chunk size, overlap and structure-aware chunking as things to test against your own queries, changing one variable at a time and recording results.\n- Use managed identities and role assignments between the application, search and model services instead of API keys. The search service uses key authentication by default; roles have to be enabled.\n- Enforce the security filter in the orchestration service on every query; never trust a filter supplied by the client.\n- Authorise users in application code. In the baseline architecture, platform roles alone do not scope a conversation and its data to the signed-in user.",
+        "limitations": "- Answers can still be wrong or unsupported; retrieval quality limits answer quality. Plan evaluation and user feedback from the start.\n- The security-filter pattern depends on permission data in the index being current. Changes to source permissions do not take effect until the affected documents are re-indexed.\n- Azure AI Search also documents built-in enforcement of source permissions using the caller's Microsoft Entra token. Its release status and supported sources vary; check current documentation before designing around it.\n- Model, feature and deployment-type availability varies by region.\n- With global deployment types, inference may be processed outside the resource's region.",
+        "security": "Users sign in with Microsoft Entra ID. Retrieval is trimmed per user with a security filter, applied by the service on every query. Marking the permission field non-retrievable only hides it from results; it is not a substitute for the filter.\n\nServices call each other with managed identities and narrowly scoped roles (for example a read-only index data role for the query path). Search, storage and the Foundry resource are reached through private endpoints with public network access disabled; indexers reach private data sources through shared private links. In the baseline architecture outbound traffic is routed through Azure Firewall.\n\nTreat prompts and retrieved documents as untrusted input. Prompt Shields scan user prompts and documents for manipulation attempts; they do not check accuracy or groundedness.",
+        "cost-drivers": "- **Model tokens**: prompt size (question plus retrieved passages plus history) and answer length, per request. Pay-per-token deployments scale with use; provisioned deployments reserve capacity that is billed whether or not it is used.\n- **Embeddings**: generated for every chunk at indexing time, again on re-indexing, and for each query.\n- **Search service**: on dedicated tiers, billed by search units (replicas multiplied by partitions) for as long as the service exists. Replicas serve query load and availability; partitions serve storage and indexing.\n- **Semantic ranker** and other premium features are billed in addition.\n- **Document extraction**: layout-aware extraction costs more per document than plain text parsing.\n- **Private endpoints, firewall and application hosting.**",
+        "validation": "- Maintain a question set with expected answers and source documents. On every change to chunking, index, prompt or model, measure retrieval quality, groundedness (is the answer supported by the retrieved context) and relevance (does it address the question). Microsoft Foundry provides built-in evaluators for these.\n- Check citations point to the passages actually used.\n- Sign in as users from different groups and confirm each retrieves only permitted documents; change a permission, re-index and re-test.\n- From inside the network, confirm service names resolve to private addresses; from outside, confirm requests are refused.\n- Test prompt-injection attempts in both questions and documents."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Model tokens per question and answer, driven by how much retrieved text is sent",
+          "Reserved model capacity if a provisioned deployment is used",
+          "Embedding generation for indexing, re-indexing and queries",
+          "Search service tier and search units (replicas x partitions)",
+          "Semantic ranker and other separately billed search features",
+          "Document extraction for complex layouts",
+          "Private endpoints, firewall and application hosting"
+        ],
+        "tradeoffs": [
+          "Fast to prototype; answer quality depends on document quality, chunking and retrieval tuning.",
+          "Integrated vectorization reduces pipeline code; an external pipeline gives more control over extraction and chunking.",
+          "Semantic ranking usually improves relevance but adds cost and latency.",
+          "Global model deployments give the widest availability; data zone or regional deployments constrain where inference is processed.",
+          "Security filters are generally available and work with any identity system, but the application must keep permission data in sync."
+        ],
+        "limitations": [
+          "Answers can still be wrong; evaluation and human review are needed.",
+          "Permission changes at the source are not reflected until documents are re-indexed.",
+          "Model and feature availability varies by region and deployment type.",
+          "Private networking adds DNS and connectivity work for indexers, skills and the application."
+        ],
+        "steps": [
+          "Agree document sources, owners and access rules; collect test documents and questions.",
+          "Deploy chat and embedding models with a deployment type that meets data-location rules.",
+          "Create the search service, enable role-based access and design the index with permission fields.",
+          "Build ingestion: extract, chunk, embed and index.",
+          "Build the retrieval and prompt orchestration service using hybrid queries.",
+          "Apply a security filter on every query so users only retrieve what they may read.",
+          "Add private endpoints and private DNS, then disable public network access.",
+          "Evaluate retrieval, groundedness and relevance on the test set.",
+          "Add monitoring, feedback capture and content filtering."
+        ]
+      },
+      "tokenNotes": "No token needs removing. costModel 'consumption' is right for pay-per-token model deployments, but a dedicated-tier search service is billed for provisioned search units while it exists and models can also run on provisioned throughput; consider describing the cost model as mixed if the vocabulary allows. The tag 'azure-openai' and the diagram technology label 'Azure OpenAI' should read 'Azure OpenAI in Microsoft Foundry Models' in display text; the phrase still contains 'Azure OpenAI', so the azure-ai platform pattern keeps matching. 'cmk' and 'masking' in security were not researched in this pass.",
+      "sources": [
+        {
+          "title": "Retrieval-augmented generation (RAG) in Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/retrieval-augmented-generation-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Classic RAG built on hybrid search and semantic ranking; agentic retrieval as the second approach"
+        },
+        {
+          "title": "Baseline Microsoft Foundry Chat Reference Architecture - Azure Architecture Center",
+          "url": "https://learn.microsoft.com/en-us/azure/architecture/ai-ml/architecture/baseline-microsoft-foundry-chat",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Reference architecture: private endpoints for platform services, public access blocked, egress through Azure Firewall, application-level user authorisation"
+        },
+        {
+          "title": "Design and Develop a RAG Solution on Azure - Azure Architecture Center",
+          "url": "https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/rag/rag-solution-design-and-evaluation-guide",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Phase-by-phase RAG design guidance: preparation, chunking, evaluation, documenting experiments"
+        },
+        {
+          "title": "Security Filter Pattern - Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/search-security-trimming-for-azure-search",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Filterable identity field and a filter applied to every query"
+        },
+        {
+          "title": "Retrieval-Augmented Generation (RAG) Evaluators for Generative AI - Microsoft Foundry",
+          "url": "https://learn.microsoft.com/en-us/azure/foundry/concepts/evaluation-evaluators/rag-evaluators",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Built-in retrieval, document retrieval, groundedness and relevance evaluators and their inputs"
+        }
+      ],
+      "corrections": [
+        "Service name: the old text says 'Azure OpenAI'. Current documentation names it 'Azure OpenAI in Microsoft Foundry Models', within Microsoft Foundry (previously Azure AI Foundry / Azure AI Studio). Text updated; the diagram node label should follow.",
+        "Retrieval: the old text described embedding and indexing only (vector retrieval). Azure AI Search's RAG guidance is built on hybrid (keyword plus vector) search with optional semantic ranking; the text now says so.",
+        "Security trimming: 'retrieval is filtered by the user's group membership' is not automatic. The generally available mechanism is a filter the application applies to every query against an identity field in the index, and it goes stale until documents are re-indexed.",
+        "Cost: added that a dedicated search service is billed by search units while it exists and that semantic ranker is billed separately; the old list implied everything was per-request.",
+        "Reference architecture: the Architecture Center baseline is now the 'Baseline Microsoft Foundry chat reference architecture'; it also requires application-level user authorisation and routes egress through Azure Firewall."
+      ],
+      "unconfirmed": [
+        "Customer-managed keys and data masking for this scenario (security tokens 'cmk', 'masking') were not checked against documentation.",
+        "'Citation accuracy' as a named metric: built-in evaluators cover retrieval, groundedness and relevance; citation checking is described here as a manual or custom check."
+      ]
+    },
+    {
+      "slug": "retrieval-augmented-generation",
+      "summary": "Ground a language model's answer in retrieved content: find the relevant passages first, then ask the model to answer from them and cite them. Quality depends mostly on retrieval, so chunking, search and evaluation need as much design effort as the prompt.",
+      "sections": {
+        "context": "Language models do not know private or recent content and can produce statements their sources do not support. Retraining a model on private documents is slow and does not respect per-user permissions. Retrieval-augmented generation (RAG) keeps the documents in a search index and supplies only the relevant passages at question time, so answers can be traced to sources and access rules can be applied at retrieval.",
+        "concepts": "- **Chunking**: splitting documents into passages. Needed to stay within model input limits and to keep each passage on one topic.\n- **Embedding**: a vector representing the meaning of a passage or question.\n- **Vector, keyword and hybrid search**: vector search finds similar meaning; keyword search finds exact terms such as codes and names; hybrid search runs both in one request and merges the results.\n- **Re-ranking**: a second step that re-scores the top results by meaning.\n- **Grounding data**: the retrieved passages placed in the prompt.\n- **Groundedness and relevance**: whether the answer is supported by the retrieved context, and whether it addresses the question.",
+        "how-it-works": "1. **Prepare**: gather representative documents and test questions.\n2. **Index**: extract text, chunk, embed and store chunks with metadata and permission identifiers.\n3. **Retrieve**: turn the question into a query (often hybrid), filter by the user's permissions, optionally re-rank.\n4. **Generate**: send the question and the top passages to the model with instructions to answer from them and cite them.\n5. **Evaluate**: measure retrieval and answer quality on the test questions and repeat.\n\nMicrosoft's guidance calls this the classic pattern. A newer agentic pattern has the system break a complex question into several sub-queries before answering.",
+        "best-practices": "- Collect test documents and questions before building; use them to evaluate chunks, search and prompts.\n- Treat chunking as an experiment. Try different sizes, overlap and structure-aware splitting, and compare results on your own questions.\n- Prefer hybrid search over vector-only search, and test a re-ranker.\n- Use the same embedding model for documents and queries.\n- Change one variable at a time and record the configuration and results of each run.\n- Apply access filters at retrieval so the model never sees content the user may not read.\n- Evaluate the parts separately (retrieval) and together (end-to-end answers).",
+        "limitations": "- Retrieval sets the ceiling: if the right passage is not retrieved, the model cannot answer correctly.\n- Answers can still be unsupported or wrong; a fixed evaluation set and human review are required.\n- Chunking and extraction have both engineering cost and per-document processing cost, and must be redone when the strategy or embedding model changes.\n- Retrieved documents are untrusted input and can carry instructions aimed at the model (indirect prompt injection).\n- More retrieved context means more tokens per request, and higher cost and latency.",
+        "validation": "Keep a versioned set of questions with expected answers and source documents. For each change measure:\n\n- **Retrieval**: are the relevant passages returned, and ranked near the top? With relevance labels, ranking metrics can be computed.\n- **Groundedness**: is every statement in the answer supported by the retrieved context?\n- **Relevance**: does the answer address the question?\n\nAlso check that citations match the passages used, and that a user without access to a document cannot retrieve it."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "Keeps content current and permission-aware without retraining a model, at the price of building and maintaining a retrieval pipeline.",
+          "More retrieved context can improve answers but raises token cost and latency.",
+          "Structure-aware chunking can produce better passages but costs more per document than plain text splitting."
+        ],
+        "limitations": [
+          "Answer quality cannot exceed retrieval quality.",
+          "Requires an evaluation set and ongoing measurement.",
+          "Retrieved content is untrusted input to the model."
+        ]
+      },
+      "sources": [
+        {
+          "title": "Design and Develop a RAG Solution on Azure - Azure Architecture Center",
+          "url": "https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/rag/rag-solution-design-and-evaluation-guide",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Phase-by-phase RAG design guidance: preparation, chunking, evaluation, documenting experiments"
+        },
+        {
+          "title": "Retrieval-augmented generation (RAG) in Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/retrieval-augmented-generation-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Classic RAG built on hybrid search and semantic ranking; agentic retrieval as the second approach"
+        },
+        {
+          "title": "Hybrid Search Overview - Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/hybrid-search-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Hybrid search runs full-text and vector queries in one request; semantic ranking is optional on top"
+        },
+        {
+          "title": "Chunk Documents - Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/vector-search-how-to-chunk-documents",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Why documents are chunked and the chunking options"
+        },
+        {
+          "title": "Retrieval-Augmented Generation (RAG) Evaluators for Generative AI - Microsoft Foundry",
+          "url": "https://learn.microsoft.com/en-us/azure/foundry/concepts/evaluation-evaluators/rag-evaluators",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Built-in retrieval, document retrieval, groundedness and relevance evaluators and their inputs"
+        }
+      ],
+      "corrections": [
+        "The old 'how it works' described only embedding and matching against the index. Official guidance treats keyword, vector and hybrid search as distinct options and recommends hybrid with re-ranking; added.",
+        "Evaluation was described only as 'a fixed question set'. Now names what to measure (retrieval quality, groundedness, relevance) and that parts and the whole are evaluated separately."
+      ],
+      "unconfirmed": []
+    },
+    {
+      "slug": "azure-private-link",
+      "summary": "Azure Private Link lets clients reach Azure platform services, or a service you publish yourself, through a private endpoint: a network interface with a private IP address in your virtual network. Traffic stays on the Microsoft network. Public access to the service is a separate setting and has to be turned off explicitly.",
+      "sections": {
+        "concepts": "- **Private Link**: the underlying capability.\n- **Private endpoint**: the consumer side. A network interface in a subnet of your virtual network with a private IP address, mapped to one specific resource (and one sub-resource, such as blob on a storage account).\n- **Private Link service**: the provider side. Lets you publish your own service behind a Standard Load Balancer so that consumers in other networks can create private endpoints to it. One Private Link service can accept many private endpoints.\n- **Private DNS zone**: holds the records that resolve the service's name to the private IP address.\n- **Service endpoint**: a different, older feature. It extends the virtual network's identity to the service, but the service keeps its public IP address.",
+        "how-it-works": "Creating a private endpoint adds a network interface to a subnet and requests a connection to the target resource. The connection is approved automatically if the requester has rights on the resource, or manually by the resource owner; only approved connections carry traffic.\n\nThe service's public DNS name becomes an alias (CNAME) for a name in a `privatelink` subdomain. Inside a network linked to the matching private DNS zone, that name resolves to the private IP address. Elsewhere it still resolves to the public endpoint. Clients keep using the normal service name.\n\nBecause the endpoint has an address in the virtual network, on-premises clients can reach it over ExpressRoute or VPN.",
+        "implementation": "1. Choose the subnet. A dedicated subnet is not required.\n2. Create the private endpoint for the resource and sub-resource, and approve the connection if needed.\n3. Create or reuse the private DNS zone for that service (for example the `privatelink` zone for blob storage) and link it to the virtual networks that need to resolve it.\n4. Add a DNS zone group to the endpoint so its records are created and removed automatically.\n5. For custom or on-premises DNS, forward the service's zone to a resolver in Azure that can query Azure-provided DNS.\n6. Disable public network access on the resource.\n7. Test resolution and connectivity.",
+        "best-practices": "- Prefer private endpoints to service endpoints for sensitive data; Microsoft recommends Private Link for most scenarios.\n- Manage private DNS zones centrally. The Cloud Adoption Framework places them in the connectivity subscription and uses Azure Policy to create DNS records for each new endpoint and to stop workload teams creating their own `privatelink` zones.\n- Create one endpoint per sub-resource the workload uses (a data lake account typically needs both blob and dfs).\n- For services with built-in geo-replication, deploy endpoints in each region where clients exist.\n- If you need network security group rules or user-defined routes to apply to private endpoints, enable private endpoint network policies on the subnet.",
+        "limitations": "- DNS is the most common source of problems: a missing zone link, a missing forwarder or a duplicate zone sends clients to the public endpoint or nowhere.\n- A private endpoint does not block the public endpoint; that is a separate setting on each service.\n- A private endpoint covers inbound connections to the service. A service's outbound calls to other resources need their own mechanism (for example shared private links in Azure AI Search).\n- Network security group and route table support has to be enabled per subnet and has its own restrictions; check current documentation.\n- Not every service or sub-resource supports Private Link in every region.",
+        "cost-drivers": "- Each private endpoint is billed for the time it exists.\n- Data processed through the endpoint is billed by volume.\n- The count grows quickly: one endpoint per resource, per sub-resource, and per region or network that needs one.\n- Private DNS zones and any DNS resolver add a smaller charge.\n- Service endpoints carry no extra charge, which is the main reason they are still used for low-risk cases."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Number of private endpoints (per resource, sub-resource and region)",
+          "Volume of data processed through the endpoints",
+          "Private DNS zones and DNS resolver"
+        ],
+        "tradeoffs": [
+          "Private IP, per-resource scope and on-premises reachability, in exchange for DNS work and a per-endpoint charge.",
+          "Service endpoints are free and simpler but leave the service on a public IP and are not reachable from on-premises."
+        ],
+        "limitations": [
+          "Does not disable the service's public endpoint by itself.",
+          "Depends on correct private DNS configuration.",
+          "Covers inbound access only; outbound calls from the service need separate handling."
+        ],
+        "compare": {
+          "Delivery model": "Azure networking feature configured per resource",
+          "Primary skills": "Azure networking, DNS",
+          "Storage format": "Not applicable",
+          "Billing model": "Per endpoint over time plus data processed",
+          "Clouds": "Azure (AWS PrivateLink and Google Cloud Private Service Connect are the equivalents)"
+        }
+      },
+      "sources": [
+        {
+          "title": "Azure Private Link frequently asked questions (FAQ)",
+          "url": "https://learn.microsoft.com/en-us/azure/private-link/private-link-faq",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Private endpoint versus Private Link service, relationship between them, difference from service endpoints, on-premises access"
+        },
+        {
+          "title": "What is a private endpoint? - Azure Private Link",
+          "url": "https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Private endpoint is a network interface with a private IP mapped to one resource; connection approval and states"
+        },
+        {
+          "title": "Private access to Azure PaaS services",
+          "url": "https://learn.microsoft.com/en-us/azure/networking/design-guide/private-platform-as-a-service",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Comparison of service endpoints and private endpoints; DNS requirement; recommendation to prefer Private Link"
+        },
+        {
+          "title": "Use private endpoints - Azure Storage",
+          "url": "https://learn.microsoft.com/en-us/azure/storage/common/storage-private-endpoints",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "CNAME to the privatelink subdomain; public name resolves to the public endpoint from outside and to the private IP from the linked network"
+        },
+        {
+          "title": "Private Link and DNS Integration at Scale - Cloud Adoption Framework",
+          "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/private-link-and-dns-integration-at-scale",
+          "publisher": "Microsoft",
+          "sourceType": "standards-framework",
+          "supports": "Central private DNS zones in the connectivity subscription, Azure Policy to create DNS records, on-premises conditional forwarding to a resolver in the hub"
+        }
+      ],
+      "corrections": [
+        "The old summary treated Private Link and private endpoints as the same thing. Private Link is the capability; a private endpoint is the consumer-side network interface; a Private Link service is the provider side for publishing your own service.",
+        "'Traffic does not use the public internet' is true for the endpoint, but the service's public endpoint stays reachable until public network access is disabled on the service. Added.",
+        "Added the distinction from service endpoints (service keeps a public IP, scope is the whole service type, not reachable from on-premises).",
+        "The item had no compare attribute although it is a technology; added the five standard keys."
+      ],
+      "unconfirmed": []
+    },
+    {
+      "slug": "hub-and-spoke-network",
+      "summary": "A central hub network holds shared connectivity and security services (gateways, firewall, DNS); workload networks (spokes) peer to it. Spokes cannot reach each other through the hub unless routing through a firewall or appliance is configured, which is what gives central control over traffic between workloads and to the internet.",
+      "sections": {
+        "context": "Many workloads need hybrid connectivity, name resolution and controlled internet egress. Building these in every workload network duplicates cost and produces inconsistent controls. A hub lets a platform team run them once, while each workload team owns its spoke. In Azure, the Cloud Adoption Framework describes two landing-zone topologies: a traditional, customer-managed hub-and-spoke network and one based on Azure Virtual WAN.",
+        "concepts": "- **Hub**: virtual network owned by the platform team, holding the ExpressRoute or VPN gateway, the firewall and shared DNS.\n- **Spoke**: a workload's virtual network, peered to the hub.\n- **Peering**: connects two virtual networks. It is not transitive: a spoke can reach the hub but not another spoke through it.\n- **User-defined route (UDR)**: a route on spoke subnets that sends traffic to the firewall in the hub.\n- **Network virtual appliance (NVA)**: a firewall or router, such as Azure Firewall, that forwards and inspects traffic.\n- **Virtual WAN hub**: a Microsoft-managed hub that handles routing between connected networks.",
+        "how-it-works": "Each spoke is peered to the hub and allowed to use the hub's gateway for on-premises connectivity. Route tables on spoke subnets send traffic for other spokes, on-premises ranges and the internet to the firewall in the hub, which applies central rules and forwards what is allowed. Without those routes, spokes are isolated from each other.\n\nShared DNS in the hub resolves private names, including private endpoint records held in central private DNS zones, and on-premises DNS servers forward to it.\n\nDirect peering between two spokes bypasses the hub. Microsoft's guidance is to use it only in special cases, such as high-volume, low-risk traffic.",
+        "implementation": "1. Plan non-overlapping address space for the hub, every spoke and on-premises networks.\n2. Deploy the hub with gateway, firewall and DNS resolver subnets.\n3. Deploy each spoke in the workload's subscription and peer it to the hub.\n4. Attach route tables to spoke subnets with the firewall as the next hop. Do not route the firewall's own subnet through itself, to avoid asymmetric routing.\n5. Write firewall rules for spoke-to-spoke, spoke-to-on-premises and egress traffic.\n6. Link central private DNS zones and configure forwarding from on-premises DNS.\n7. Automate spoke creation, peering and routes with infrastructure as code or Azure Virtual Network Manager.",
+        "best-practices": "- Keep the firewall and gateways in the hub and workloads in spokes; keep the hub free of workload resources.\n- Give the hub a clear owner (the platform team) and a change process, because every workload depends on it.\n- Use one hub per region and connect hubs for multi-region designs.\n- Choose Virtual WAN instead when you need transit across more than two regions, have many branch sites or want Microsoft to manage routing; choose the traditional topology when you need full control of routing and security.\n- Decide per workload whether private endpoints live in the spoke (usual) or in a shared network.",
+        "limitations": "- The hub is shared infrastructure: an outage or a bad rule affects every spoke.\n- The traditional topology is customer-managed. Routes, peerings and firewall rules are yours to maintain and are a common source of faults.\n- Sending all spoke-to-spoke traffic through the firewall adds latency and data-processing cost.\n- Peering counts per hub and Virtual WAN hub capacity are limited; check current documentation when planning scale.\n- Virtual WAN reduces routing work but gives less control over the hub's configuration.",
+        "cost-drivers": "- The firewall or appliance in the hub: a fixed charge while deployed plus data processed.\n- ExpressRoute or VPN gateways and circuits.\n- Peering data transfer between spokes and hub, more when regions differ.\n- DNS resolver and private DNS zones.\n- Platform team effort to operate routing, rules and change control."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Hub firewall or network virtual appliance (fixed plus data processed)",
+          "ExpressRoute or VPN gateways and circuits",
+          "Peering data transfer, especially across regions",
+          "DNS resolver and private DNS zones",
+          "Platform team operations"
+        ],
+        "tradeoffs": [
+          "Central control and shared services, in exchange for a shared dependency every workload relies on.",
+          "Customer-managed hub gives full control of routing and security; Virtual WAN reduces management but is less customisable.",
+          "Routing spoke-to-spoke traffic through the firewall gives inspection but adds latency and cost; direct peering does the reverse."
+        ],
+        "limitations": [
+          "Peering is not transitive; spoke-to-spoke traffic needs routes and a forwarding device.",
+          "The hub is a shared point of failure and change risk.",
+          "Scale limits apply to peerings and hubs; check current documentation."
+        ]
+      },
+      "sources": [
+        {
+          "title": "Hub-Spoke Network Topology in Azure - Azure Architecture Center",
+          "url": "https://learn.microsoft.com/en-us/azure/architecture/networking/architecture/hub-spoke",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Hub and spokes joined by peering; peering is non-transitive; user-defined routes send spoke traffic to Azure Firewall in the hub; direct spoke peering as an exception"
+        },
+        {
+          "title": "Define an Azure network topology - Cloud Adoption Framework",
+          "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/define-an-azure-network-topology",
+          "publisher": "Microsoft",
+          "sourceType": "standards-framework",
+          "supports": "Two landing-zone topologies (Virtual WAN and traditional hub-and-spoke) and when to choose each"
+        },
+        {
+          "title": "Traditional Azure networking topology - Cloud Adoption Framework",
+          "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/traditional-azure-networking-topology",
+          "publisher": "Microsoft",
+          "sourceType": "standards-framework",
+          "supports": "Customer-managed routing and security; transit needs user-defined routes and network virtual appliances"
+        },
+        {
+          "title": "Hub-Spoke Network Topology Using Azure Virtual WAN - Azure Architecture Center",
+          "url": "https://learn.microsoft.com/en-us/azure/architecture/networking/architecture/hub-spoke-virtual-wan-architecture",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Microsoft-managed Virtual WAN hub and routing intent as the alternative"
+        },
+        {
+          "title": "Virtual Network Connectivity Options and Spoke-To-Spoke Communication - Azure Architecture Center",
+          "url": "https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/hybrid-networking/virtual-network-peering",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Options for spoke-to-spoke traffic and their trade-offs"
+        }
+      ],
+      "corrections": [
+        "'Traffic between spokes is routed through the hub' is not automatic. Virtual network peering is non-transitive; spoke-to-spoke traffic flows through the hub only when user-defined routes send it to a firewall or appliance there. Text now states this.",
+        "'Spokes stay isolated from each other' is the default result of non-transitive peering, not a separate control; clarified.",
+        "Added Azure Virtual WAN as the documented alternative and the Cloud Adoption Framework's criteria for choosing between the two."
+      ],
+      "unconfirmed": []
+    },
+    {
+      "slug": "private-endpoint-isolation",
+      "summary": "Reach data and AI services only through private endpoints inside the organisation's network, and disable their public network access. Two separate steps are needed: the private endpoint adds a private path, and a setting on each service closes the public one.",
+      "sections": {
+        "context": "Data platforms hold sensitive data, and a public endpoint is reachable from anywhere with only identity controls in front of it. Network isolation adds a second control: a stolen credential is not enough without a path into the network. A private endpoint is also tied to one resource, which limits data being copied to another resource of the same service type; a service endpoint covers the whole service type.",
+        "how-it-works": "1. Each service gets a private endpoint in a workload (spoke) network, one per sub-resource used.\n2. A private DNS zone resolves the service's normal name to the private IP address for networks linked to the zone. On-premises DNS forwards those zones to a resolver in Azure.\n3. Public network access is disabled on the service. Creating the endpoint does not do this.\n4. Clients, including on-premises users over ExpressRoute or VPN, keep using the same service name.\n5. Service-to-service calls also need a private path. A managed service that pulls data, such as a search indexer, uses its own outbound private connection.",
+        "implementation": "1. List every service and every caller, including indexers, pipelines, build agents and administrators' workstations.\n2. Set up central private DNS zones and on-premises forwarding first.\n3. Create private endpoints and confirm each connection is approved.\n4. Test every caller over the private path.\n5. Only then disable public network access, one service at a time.\n6. Enforce with Azure Policy: deny services with public access enabled and create DNS records for new endpoints automatically.\n7. Provide a private route for operators (VPN, jump host or equivalent), because portals and tools that call the data plane stop working from the internet.",
+        "best-practices": "- Keep identity controls. Network isolation supplements least-privilege access; it does not replace it.\n- Own DNS centrally. The Cloud Adoption Framework has the platform team own private DNS zones and workload teams own their endpoints.\n- Route outbound traffic from the workload through a firewall so that data cannot leave by another path.\n- Do not rely on 'trusted services' exceptions without checking how each service treats them when public access is disabled.\n- The same pattern exists elsewhere: interface VPC endpoints with private DNS in AWS PrivateLink, and Private Service Connect endpoints in Google Cloud.",
+        "limitations": "- Every caller needs a network path and working DNS; development tools, SaaS integrations and build agents are often forgotten.\n- Some service features run on provider-managed infrastructure outside your network and need extra configuration or are unavailable when public access is off. Check each service's documentation.\n- More endpoints, DNS zones and firewall rules to operate, and troubleshooting is harder.\n- Each endpoint adds cost.",
+        "validation": "- From inside the network, resolve each service name and confirm it returns the private IP address, then connect.\n- From outside the network, attempt a request and confirm it is refused. The name still resolves publicly, so test the connection, not just the DNS answer.\n- Confirm each private endpoint connection is in the approved state.\n- Run every pipeline, indexer and deployment end to end after public access is disabled.\n- Check with policy compliance reports that no service in scope has public network access enabled."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Private endpoints per service, sub-resource and region",
+          "Data processed through endpoints",
+          "Firewall for controlled egress",
+          "DNS resolver and operations effort"
+        ],
+        "tradeoffs": [
+          "Smaller attack surface and a second control behind identity, in exchange for more network and DNS work.",
+          "Blocking public access breaks any caller without a private path, including some tools and managed features."
+        ],
+        "limitations": [
+          "A private endpoint alone leaves the public endpoint open.",
+          "Features that run outside your network may need extra configuration.",
+          "Requires working private DNS for every caller, including on-premises."
+        ]
+      },
+      "sources": [
+        {
+          "title": "Private access to Azure PaaS services",
+          "url": "https://learn.microsoft.com/en-us/azure/networking/design-guide/private-platform-as-a-service",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Comparison of service endpoints and private endpoints; DNS requirement; recommendation to prefer Private Link"
+        },
+        {
+          "title": "Use private endpoints - Azure Storage",
+          "url": "https://learn.microsoft.com/en-us/azure/storage/common/storage-private-endpoints",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "CNAME to the privatelink subdomain; public name resolves to the public endpoint from outside and to the private IP from the linked network"
+        },
+        {
+          "title": "Private Link and DNS Integration at Scale - Cloud Adoption Framework",
+          "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/azure-best-practices/private-link-and-dns-integration-at-scale",
+          "publisher": "Microsoft",
+          "sourceType": "standards-framework",
+          "supports": "Central private DNS zones in the connectivity subscription, Azure Policy to create DNS records, on-premises conditional forwarding to a resolver in the hub"
+        },
+        {
+          "title": "Create a Private Endpoint for a Secure Connection - Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/service-create-private-endpoint",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Private endpoint for the search service and disabling public network access"
+        },
+        {
+          "title": "Access AWS services through AWS PrivateLink - Amazon Virtual Private Cloud",
+          "url": "https://docs.aws.amazon.com/vpc/latest/privatelink/privatelink-access-aws-services.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "AWS equivalent: interface VPC endpoints with private DNS"
+        }
+      ],
+      "corrections": [
+        "Validation said to resolve the name from outside 'and confirm only the private address answers'. From outside the network the name still resolves to the public endpoint; the correct test is that the connection is refused once public access is disabled. Rewritten.",
+        "Made explicit that creating a private endpoint does not disable public access; it is a separate per-service setting.",
+        "Added that outbound and service-to-service calls (for example search indexers reaching private storage) need their own private connections."
+      ],
+      "unconfirmed": []
+    },
+    {
+      "slug": "least-privilege-access",
+      "summary": "Give each identity only the permissions its task needs, at the narrowest scope, for only as long as needed. Assign roles to groups rather than individuals, use platform-issued identities instead of stored credentials for workloads, make privileged access time-bound, and review assignments on a schedule.",
+      "sections": {
+        "context": "Every permission an identity holds is available to whoever compromises it. Broad roles at broad scopes are convenient and tend to accumulate, so a single stolen credential or mistake can reach far more than the task required. All three major clouds state least privilege as a baseline practice in their identity guidance.",
+        "concepts": "- **Role and scope**: what an identity may do, and where. Narrower scope (a resource group or single resource rather than a subscription) limits exposure.\n- **Group-based assignment**: roles go to groups; people gain access by membership.\n- **Workload identity**: an identity issued and rotated by the platform, so no secret is stored. Managed identities in Azure, IAM roles in AWS, service accounts in Google Cloud.\n- **Just-in-time access**: a user is eligible for a privileged role and activates it for a limited time, with approval or justification.\n- **Access review**: a recurring check that each assignment is still needed.",
+        "best-practices": "- Start from the task, pick the most specific built-in role, and assign it at the narrowest scope that works.\n- Assign roles to groups, not individual users. In Azure this also keeps the number of role assignments down.\n- Keep the number of subscription owners small; Microsoft suggests a maximum of three.\n- Do not give engineering teams Owner or User Access Administrator; give groups a role such as Contributor.\n- Separate duties between engineers, analysts and administrators.\n- Use managed identities (or the equivalent) for services; Microsoft recommends user-assigned identities for most scenarios.\n- Make privileged roles eligible and time-bound with Privileged Identity Management.\n- Review privileged assignments on a recurring schedule and remove unused ones.",
+        "implementation": "**Azure / Microsoft Entra**: Azure RBAC roles assigned to Entra groups; managed identities for workloads; Privileged Identity Management for activation with approval and multifactor authentication; access reviews for recurring checks. Check licence requirements for the governance features.\n\n**AWS**: federate human users through an identity provider so they receive temporary credentials; give workloads IAM roles; move from AWS managed policies towards narrower customer managed policies; use IAM Access Analyzer to generate policies from observed activity and to find external access; use permissions boundaries to cap what can be granted.\n\n**Google Cloud**: avoid basic roles in production; use predefined roles, or custom roles when none fits; one service account per service; grant at the smallest scope; use role recommendations, which are based on observed permission usage, to remove excess.",
+        "limitations": "- Fine-grained roles take time to design and need maintenance as services add permissions; custom roles are not updated for you.\n- Too little access blocks work and pushes people to ask for broad roles; expect iteration.\n- Just-in-time activation adds a step for operators and needs a tested break-glass route.\n- Group-based access is only as good as group membership management.\n- New role assignments can take time to take effect.",
+        "validation": "- Sample users from each role and confirm they can do their task and nothing beyond it; include a negative test.\n- List assignments at subscription, account or project level and confirm each has an owner and a reason.\n- Count standing privileged assignments; the target is few or none outside break-glass accounts.\n- Search for stored secrets and access keys where a workload identity could be used.\n- Confirm access reviews run and that their decisions are applied.\n- Use the provider's analysis tools (IAM Access Analyzer, Google Cloud role recommendations) to find unused permissions."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "Smaller blast radius, in exchange for more design and administration effort.",
+          "Just-in-time elevation removes standing privilege but slows urgent work unless the process is rehearsed.",
+          "Built-in roles are maintained by the provider but may be broader than needed; custom roles are exact but must be maintained."
+        ],
+        "limitations": [
+          "Needs ongoing review; permissions drift as people and workloads change.",
+          "Depends on accurate group membership.",
+          "Some governance features require specific licences; check current documentation."
+        ]
+      },
+      "sources": [
+        {
+          "title": "Best practices for Azure RBAC",
+          "url": "https://learn.microsoft.com/en-us/azure/role-based-access-control/best-practices",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Grant least privilege at narrow scope, limit subscription owners, assign roles to groups, use PIM"
+        },
+        {
+          "title": "Managed identities for Azure resources - Managed identities for Azure resources",
+          "url": "https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Managed identities remove stored credentials; system-assigned versus user-assigned"
+        },
+        {
+          "title": "What is Privileged Identity Management? - Microsoft Entra ID Governance",
+          "url": "https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-configure",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Time-bound, approval-based activation of privileged roles"
+        },
+        {
+          "title": "Security best practices in IAM - AWS Identity and Access Management",
+          "url": "https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "AWS equivalent: least-privilege permissions, temporary credentials via federation and roles, IAM Access Analyzer"
+        },
+        {
+          "title": "Use IAM securely | Identity and Access Management (IAM) | Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/iam/docs/using-iam-securely",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Google Cloud equivalent: avoid basic roles, grant at the smallest scope, separate service accounts"
+        }
+      ],
+      "corrections": [
+        "The old text was generic and cited only framework home pages. It now names the documented mechanisms: narrow scope, group assignment, managed identities, Privileged Identity Management and access reviews, with specific pages.",
+        "Added the AWS and Google Cloud equivalents so the practice is cloud-neutral; the old item cited AWS but described nothing AWS-specific.",
+        "Added time-bound (just-in-time) privileged access, which the old text omitted."
+      ],
+      "unconfirmed": []
+    }
+  ],
+  "newItems": [
+    {
+      "slug": "azure-ai-search",
+      "type": "technology",
+      "title": "Azure AI Search",
+      "summary": "Microsoft's managed search service. It indexes text and vectors and answers keyword, vector and hybrid queries, with an optional semantic ranker, and is the usual retrieval store for RAG applications on Azure.",
+      "tags": [
+        "azure",
+        "ai-search",
+        "rag",
+        "genai"
+      ],
+      "sections": {
+        "concepts": "- **Index**: the searchable store, with text fields, vector fields and filterable metadata.\n- **Indexer and skillset**: a pull pipeline that reads a data source and can chunk and embed content on the way in (integrated vectorization).\n- **Vectorizer**: embeds the query text at query time with the same model.\n- **Hybrid query**: full-text and vector search in one request.\n- **Semantic ranker**: optional re-scoring of results by meaning.\n- **Replicas and partitions**: replicas add query capacity and availability; partitions add storage and indexing capacity.",
+        "security": "The service authenticates with API keys by default; role-based access with Microsoft Entra ID has to be enabled, after which keys can be disabled. Built-in data roles separate read-only query access from read-write access. Inbound access can be restricted to private endpoints with public network access disabled; indexers reach private data sources through shared private links. Per-user result trimming uses a security filter on an identity field applied to every query; token-based enforcement of source permissions is also documented, so check its current status.",
+        "cost-drivers": "On dedicated tiers the service is billed by search units, which is replicas multiplied by partitions, for as long as the service exists. Semantic ranker and other premium features are billed in addition. Embedding and enrichment calls made by skillsets are billed by the services they call. Add partitions only for index size or indexing throughput, and replicas only for query volume or availability.",
+        "limitations": "Service tier determines storage and scale limits; check current documentation before choosing one. Permission metadata in the index is a copy and goes stale until documents are re-indexed. Some skills and features run outside your virtual network and need extra configuration under private networking. Feature availability varies by region and tier."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Search units (replicas x partitions) on dedicated tiers",
+          "Semantic ranker and other premium features",
+          "Embedding and enrichment calls during indexing"
+        ],
+        "compare": {
+          "Delivery model": "Platform as a service",
+          "Primary skills": "Search index design, REST or SDK (Python, .NET)",
+          "Storage format": "Service-managed search and vector indexes",
+          "Billing model": "Provisioned search units; premium features billed separately",
+          "Clouds": "Azure"
+        }
+      },
+      "relationships": [
+        [
+          "implements",
+          "retrieval-augmented-generation"
+        ],
+        [
+          "integrates_with",
+          "azure-private-link"
+        ],
+        [
+          "related_to",
+          "azure-rag-knowledge-assistant"
+        ]
+      ],
+      "sources": [
+        {
+          "title": "Retrieval-augmented generation (RAG) in Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/retrieval-augmented-generation-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Classic RAG built on hybrid search and semantic ranking; agentic retrieval as the second approach"
+        },
+        {
+          "title": "Integrated Vectorization Overview - Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/vector-search-integrated-vectorization",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Indexer and skillset chunk and embed at indexing time; a vectorizer embeds the query"
+        },
+        {
+          "title": "Enable Role-Based Access Control - Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/search-security-enable-roles",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Search service defaults to key authentication; roles must be enabled; keys can be disabled"
+        },
+        {
+          "title": "Plan and Manage Costs - Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/search-sku-manage-costs",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Search units (replicas x partitions) and separately billed premium features such as semantic ranker"
+        },
+        {
+          "title": "Estimate Capacity for Query and Index Workloads - Azure AI Search",
+          "url": "https://learn.microsoft.com/en-us/azure/search/search-capacity-planning",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Replicas serve query load and availability; partitions serve storage and indexing"
+        }
+      ]
+    },
+    {
+      "slug": "azure-openai-foundry-models",
+      "type": "technology",
+      "title": "Azure OpenAI in Microsoft Foundry Models",
+      "summary": "The current name for what was Azure OpenAI Service: OpenAI chat and embedding models hosted by Microsoft and deployed from a Microsoft Foundry resource (Foundry was previously Azure AI Foundry and Azure AI Studio). Existing Azure OpenAI resources continue to work and can be upgraded.",
+      "tags": [
+        "azure",
+        "azure-openai",
+        "genai",
+        "foundry"
+      ],
+      "sections": {
+        "concepts": "- **Foundry resource**: the Azure resource that hosts model deployments. An existing Azure OpenAI resource can be upgraded to it, keeping its endpoints and configuration.\n- **Deployment**: a named instance of a model that applications call.\n- **Deployment type**: decides where inference is processed and how it is billed. Global types may process in any Azure region; data zone types stay within a Microsoft-defined zone; regional types stay in the chosen geography. Data at rest stays in the resource's geography in all cases.\n- **Pay-per-token versus provisioned**: provisioned deployments reserve capacity for predictable throughput.",
+        "security": "Use Microsoft Entra ID (keyless) authentication with managed identities instead of API keys. Private endpoints are defined on the resource, not per project, so all projects in a resource share the same network exposure. Content filtering is applied to model inputs and outputs and is configurable; Prompt Shields scan prompts and supplied documents for manipulation attempts but do not check accuracy. Platform roles do not separate one user's conversations from another's; the application must do that.",
+        "cost-drivers": "Tokens in and out per request for pay-per-token deployments, so prompt size and retrieved context matter most. Provisioned deployments are billed for reserved capacity whether or not it is used. Batch deployment types trade latency for lower cost. Embedding calls for indexing are a separate, volume-driven line.",
+        "limitations": "Model availability differs by region and deployment type; new models generally appear first on global deployments. Models are retired on a published lifecycle, so plan for version upgrades and re-evaluation. Names and portal layout in this area have changed several times; confirm current terms in the documentation."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Input and output tokens per request",
+          "Reserved capacity for provisioned deployments",
+          "Embedding generation volume"
+        ],
+        "compare": {
+          "Delivery model": "Platform as a service (hosted models)",
+          "Primary skills": "Python or other SDK, prompt design, evaluation",
+          "Storage format": "Not applicable",
+          "Billing model": "Consumption (per token) or provisioned throughput",
+          "Clouds": "Azure"
+        }
+      },
+      "relationships": [
+        [
+          "related_to",
+          "azure-rag-knowledge-assistant"
+        ],
+        [
+          "integrates_with",
+          "azure-ai-search"
+        ],
+        [
+          "integrates_with",
+          "azure-private-link"
+        ]
+      ],
+      "sources": [
+        {
+          "title": "What is Microsoft Foundry? - Microsoft Foundry",
+          "url": "https://learn.microsoft.com/en-us/azure/foundry/what-is-foundry",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Current platform name: Microsoft Foundry (previously Azure AI Foundry, Azure AI Studio)"
+        },
+        {
+          "title": "Upgrade Azure OpenAI to Microsoft Foundry - Microsoft Foundry",
+          "url": "https://learn.microsoft.com/en-us/azure/foundry/how-to/upgrade-azure-openai",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Azure OpenAI resources can be upgraded to the Foundry resource type, keeping endpoints and configuration"
+        },
+        {
+          "title": "Understanding deployment types in Microsoft Foundry Models - Microsoft Foundry",
+          "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/deployment-types",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Global, data zone and regional deployment types and where inference is processed; pay-per-token versus provisioned"
+        },
+        {
+          "title": "Provisioned throughput for Foundry Models - Microsoft Foundry",
+          "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/provisioned-throughput",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Provisioned deployments reserve capacity that is billed whether or not it is used"
+        },
+        {
+          "title": "Prompt Shields in Microsoft Foundry - Microsoft Foundry",
+          "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/concepts/content-filter-prompt-shields",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Prompt Shields scan user prompts and documents for manipulation attempts; they do not judge accuracy or groundedness"
+        }
+      ]
+    }
+  ]
+}

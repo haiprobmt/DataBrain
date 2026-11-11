@@ -1,1 +1,686 @@
-{"cluster":"fabric","researchedOn":"2026-11-11","items":[],"newItems":[]}
+{
+  "cluster": "fabric",
+  "researchedOn": "2026-11-11",
+  "items": [
+    {
+      "slug": "fabric-lakehouse-enterprise-bi",
+      "summary": "A medallion lakehouse on Microsoft Fabric: Data Factory pipelines land source data in OneLake, notebooks or Dataflows Gen2 refine it through bronze, silver and gold, and a Power BI semantic model in Direct Lake mode reads the gold Delta tables without copying them into an import model.",
+      "sections": {
+        "context": "Fits an organisation that wants one governed reporting platform, already uses Microsoft 365 and Power BI, and has a team stronger in SQL and Power BI than in Spark.\n\nFabric is delivered as software as a service. Every workload reads and writes the same OneLake storage, so data does not have to be copied between the ingestion, engineering, warehousing and reporting tools. Compute for all of them comes from one or more Fabric capacities, which makes capacity planning a central design decision rather than an afterthought.",
+        "how-it-works": "- **Bronze**: pipelines or Copy jobs land source data as it arrives. Microsoft's guidance is to keep the source format here, and to use a OneLake shortcut instead of a copy when the data already sits in OneLake, ADLS Gen2, Amazon S3 or Google Cloud Storage.\n- **Silver**: notebooks (Spark) or Dataflows Gen2 fix errors, remove duplicates and conform the data into Delta tables.\n- **Gold**: Delta tables shaped as star schemas for reporting. Gold can be a lakehouse or a Fabric Warehouse.\n- **Serving**: a Direct Lake semantic model loads column data on demand from the gold Parquet files. A refresh (\"framing\") only repoints the model at the latest Delta table version; it does not copy the data.",
+        "implementation": "1. Create a capacity per environment or workload group, then workspaces for dev, test and production.\n2. Decide the layer layout: one lakehouse per layer (clearer separation, more to operate) or one lakehouse with a schema per layer.\n3. Set up connectivity to the sources: on-premises data gateway, or a virtual network data gateway if private links are required.\n4. Build bronze ingestion, then silver and gold transformations.\n5. Build the Direct Lake semantic model on gold; define measures and row-level security.\n6. Connect the dev workspace to Git and promote with deployment pipelines or a Git-driven release flow; use variable libraries for environment-specific settings.\n7. Reconcile against legacy reports and cut over.",
+        "prerequisites": "- A Fabric capacity and the rights to create workspaces on it.\n- Microsoft Entra ID groups for workspace roles and for report audiences.\n- A network path to each source. On-premises sources need a gateway machine that can make outbound connections to Azure; no inbound ports are required.\n- Power BI licences for people who author and share content. Whether report viewers also need a paid licence depends on the capacity size; check the current licensing guide.\n- Microsoft Purview licensing if sensitivity labels, protection policies or data loss prevention policies are in scope.",
+        "best-practices": "- Use Delta tables for silver and gold, and keep bronze unchanged so later layers can be rebuilt from it.\n- Keep gold tables within the Direct Lake guardrails by compacting small files; one table over a guardrail affects the whole model.\n- Materialise logic as Delta tables rather than SQL views if the model uses Direct Lake on the SQL analytics endpoint, because views cause fallback to DirectQuery.\n- Schedule heavy background jobs away from peak reporting hours, or put them on a separate capacity.\n- Check that every gold table has lineage back through silver to bronze.\n- Use Fabric Git integration for source control; Microsoft's guidance favours Azure DevOps because the GitHub integration has more limitations.",
+        "limitations": "- One capacity serves ingestion, transformation and reporting. Sustained overload leads to throttling: interactive requests are delayed first, then rejected, and eventually background jobs are rejected too.\n- Direct Lake has per-table guardrails that depend on the capacity SKU. The variant on the SQL analytics endpoint can fall back to slower DirectQuery; the variant on OneLake does not fall back and fails instead.\n- On-premises data gateways cannot register when tenant-level private links are enabled; use a virtual network data gateway.\n- Lakehouse Delta tables support single-table transactions; multi-table transactions need a Fabric Warehouse.\n- Features and regional availability change often; check current documentation.",
+        "security": "Access has two planes. Workspace roles (Admin, Member, Contributor, Viewer) and item permissions control who can manage and open items. OneLake security roles control which tables, folders, rows and columns a user can read; they are grant-only and apply to Viewers, because the other three roles have write access.\n\nRow-level security defined in a Power BI semantic model also only restricts Viewers. With Direct Lake and single sign-on, users need access to the underlying data and could query it directly, bypassing model rules; use a fixed-identity connection with model RLS, or enforce the rule in OneLake security so it applies to every engine.\n\nSensitivity labels, data loss prevention and audit come from Microsoft Purview.",
+        "cost-drivers": "- Capacity SKU size and the hours it runs. F SKUs are billed through Azure, can be paused, and can be reserved for steady workloads.\n- Background jobs: their consumption is smoothed over a long window, so a large nightly load still counts against the next day's headroom.\n- OneLake storage volume, which grows with retained bronze history and unvacuumed Delta files.\n- Power BI licences for authors, and for viewers on smaller capacities.\n- Microsoft Purview licensing for labels and data loss prevention.\n- Gateway machines and their operation.",
+        "validation": "- Reconcile row counts and control totals between source and gold for each load.\n- Compare key reports with the legacy reports for an agreed period.\n- Test row-level security with real Viewer accounts from each role; workspace Admins, Members and Contributors are not filtered.\n- Confirm the model stays in Direct Lake mode: inspect fallback information for each table, or set the model to Direct Lake only so fallback fails visibly.\n- Run a representative load window and check the Fabric Capacity Metrics app for utilisation and throttling events."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Fabric capacity SKU size and the hours it runs (pause and reservation options on F SKUs)",
+          "Background job consumption, which is smoothed across a long window and reduces headroom",
+          "OneLake storage volume, including retained bronze history",
+          "Power BI licences for authors, and for viewers on smaller capacities",
+          "Microsoft Purview licensing for labels and data loss prevention",
+          "Gateway machines for on-premises sources"
+        ],
+        "tradeoffs": [
+          "One capacity serves ingestion, transformation and reporting, so heavy jobs can throttle interactive reports unless scheduled or isolated on a separate capacity.",
+          "Direct Lake avoids import refreshes but ties report performance to how well the gold Delta tables are maintained.",
+          "Separate lakehouses per layer give clearer access separation at the cost of more items to operate; one lakehouse with schemas is simpler.",
+          "Tight integration with the Microsoft stack; less portable than open-source engines run yourself, although the data stays in open Delta Parquet."
+        ],
+        "limitations": [
+          "Direct Lake guardrails are per table and depend on capacity SKU; exceeding them causes DirectQuery fallback or a failed refresh depending on the Direct Lake variant.",
+          "On-premises data gateways cannot register when tenant-level private links are enabled; a virtual network data gateway is needed instead.",
+          "Semantic-model row-level security only restricts workspace Viewers, and can be bypassed with single sign-on if users have direct access to the lake data.",
+          "Lakehouse tables support single-table transactions only; multi-table transactions need a Fabric Warehouse.",
+          "Feature availability differs by region and changes frequently; check current documentation."
+        ],
+        "steps": [
+          "Create the Fabric capacity and workspaces per environment.",
+          "Choose the layer layout: a lakehouse per layer or one lakehouse with a schema per layer.",
+          "Set up the on-premises data gateway, or a virtual network data gateway where private links are required.",
+          "Build bronze ingestion pipelines; use shortcuts where the data is already in supported storage.",
+          "Build silver and gold Delta tables with notebooks or Dataflows Gen2.",
+          "Publish the Direct Lake semantic model with measures and row-level security.",
+          "Connect dev to Git and set up deployment pipelines with variable libraries.",
+          "Reconcile against the legacy reports, check capacity utilisation and cut over."
+        ]
+      },
+      "tokenNotes": "security: 'private-networking' and 'hybrid-connectivity' are both valid but do not combine freely: with tenant-level private links the on-premises data gateway cannot register, so the hybrid path becomes a virtual network data gateway. Keep both tokens, but consider lowering confidence for briefs that need both. 'masking' was not researched in this pass (no source found for dynamic data masking on this path), so treat it as unverified. skills: consider adding 'spark' since silver/gold notebooks are Spark.",
+      "sources": [
+        {
+          "title": "Implement Medallion Lakehouse Architecture in Fabric - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/onelake/onelake-medallion-lakehouse-architecture",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Layer definitions, lakehouse-per-layer and gold-as-warehouse patterns, shortcuts for bronze, Delta for silver and gold"
+        },
+        {
+          "title": "Direct Lake overview - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/fundamentals/direct-lake-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Direct Lake variants, guardrails, fallback behaviour and framing"
+        },
+        {
+          "title": "Understand capacity throttling and smoothing - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/enterprise/throttling",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Capacity-level smoothing, bursting and the staged throttling policy"
+        },
+        {
+          "title": "OneLake security roles, permissions, and scopes - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/onelake/security/data-access-control-model",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Two-plane security model, grant-only OneLake roles, Viewer scope"
+        },
+        {
+          "title": "About private Links for secure access to Fabric - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/security/security-private-links-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Private links and the on-premises data gateway registration restriction"
+        }
+      ],
+      "corrections": [
+        "Old text said Direct Lake means reports 'do not need a separate import refresh'. Direct Lake still needs a refresh (framing) to pick up new Delta versions; it is a metadata operation rather than a data copy.",
+        "Old text presented the on-premises data gateway and private networking as compatible. Microsoft documents that on-premises data gateways cannot register when tenant-level private links are enabled; a virtual network data gateway is used instead.",
+        "Old text said row-level security is defined in the semantic model with no caveat. Model RLS only restricts workspace Viewers, and with Direct Lake single sign-on users with lake access can bypass it; added fixed identity and OneLake security options.",
+        "Old text described capacity sharing only as 'compete'. Replaced with the documented mechanism: smoothing, bursting and staged throttling (delay, then reject interactive, then reject background).",
+        "Old text implied gold is always a lakehouse. Fabric guidance also documents gold as a Fabric Warehouse, and bronze as shortcuts rather than copies."
+      ],
+      "unconfirmed": [
+        "'Fabric Monitoring hub' as the capacity monitoring tool: search results confirmed the Fabric Capacity Metrics app for capacity utilisation; the Monitoring hub for pipeline runs was not checked.",
+        "Dynamic data masking ('masking' token) on this architecture was not confirmed.",
+        "'Private networking options for Fabric are narrower than for IaaS/PaaS services' is a comparison no source states; replaced with the specific documented gateway restriction."
+      ]
+    },
+    {
+      "slug": "sql-server-dw-to-fabric-migration",
+      "summary": "A phased migration of a SQL Server / SSIS / SSAS warehouse to Microsoft Fabric. The Migration Assistant converts schema and T-SQL objects into a Fabric Warehouse, data is loaded separately, ETL is rebuilt as pipelines, cubes are rebuilt as Power BI semantic models, and reports are repointed after reconciliation.",
+      "sections": {
+        "context": "An organisation runs reporting on an ageing on-premises SQL Server warehouse with SSIS packages and SSAS models, and wants to retire the hardware and licences.\n\nThe migration has four separate tracks that move at different speeds: schema and code, data, ETL, and the semantic layer with its reports. Microsoft's tooling automates part of the first track only. Plan and estimate the other three as rebuild work.",
+        "how-it-works": "- **Schema and code**: the Fabric Migration Assistant for Data Warehouse takes a DACPAC or a zip of .sql files (or connects to the source) and creates a new warehouse, translating T-SQL metadata to the syntax Fabric supports. Objects it cannot translate are listed for manual fixing.\n- **Data**: moved separately, with pipelines, Copy job or COPY INTO from files staged in Azure storage.\n- **ETL**: SSIS packages are rebuilt as Fabric pipelines, Dataflows Gen2, notebooks or T-SQL procedures.\n- **Semantic layer**: tabular models are republished as Power BI semantic models; multidimensional cubes are redesigned.\n- **Cutover**: workloads move in waves; each wave reconciles against the legacy system before reports are repointed.",
+        "implementation": "1. Inventory databases, SSIS packages, Analysis Services models and reports; classify each by complexity.\n2. Extract a DACPAC and run the Migration Assistant to see which objects convert and which need rework.\n3. Stand up capacity, workspaces and a gateway.\n4. Fix unconverted objects; decide per subject area between Warehouse (T-SQL, multi-table transactions) and lakehouse (Spark).\n5. Load history, then reconcile.\n6. Rebuild ETL workload by workload, with incremental loads.\n7. Rebuild semantic models and repoint reports.\n8. Recreate security: roles, permissions and row-level security.\n9. Run old and new in parallel, reconcile, cut over and decommission.",
+        "prerequisites": "- A Fabric capacity sized for both the historical load and steady-state running.\n- An on-premises data gateway (recent version; check the minimum for pipelines) on a machine that can reach the SQL Server and make outbound connections to Azure.\n- Microsoft Entra ID identities and groups for everyone who currently connects with SQL logins; the Fabric Warehouse does not support CREATE USER.\n- An agreed reconciliation method and tolerance per table and per report.\n- Owners for each SSIS package and cube who can confirm what the logic is meant to do.",
+        "best-practices": "- Run the Migration Assistant early: its list of unconverted objects is the best input to the estimate.\n- Load in batches. Avoid row-by-row INSERT statements; use COPY INTO or pipelines, with reasonably large files.\n- Keep V-Order on unless testing shows a write-heavy workload benefits from turning it off.\n- Model gold as star schemas with surrogate keys rather than porting a normalised schema as is.\n- Consider Fabric Mirroring for SQL Server sources that must stay live during coexistence, instead of building bespoke change capture.\n- Move one subject area end to end before starting the next.",
+        "limitations": "- The Migration Assistant migrates metadata, not data, and does not migrate ETL, security setup or report connections.\n- T-SQL coverage differs from SQL Server. At the time of research the documentation listed triggers, recursive queries, materialized views, FOR XML and most ALTER TABLE operations as unsupported, and key constraints only as NOT ENFORCED. Some data types are mapped to others. Check the current T-SQL surface area page.\n- The Invoke SSIS Package pipeline activity was in preview, runs only packages stored in OneLake, and cannot reach on-premises or private-network sources or use custom components.\n- Microsoft documents an automated migration for Azure Analysis Services, not for on-premises SSAS.",
+        "security": "Authentication moves from SQL logins and Windows groups to Microsoft Entra ID. Workspace roles and item permissions control who can connect; a user without item access is rejected whatever SQL permissions exist.\n\nInside a Fabric Warehouse, object permissions, row-level security (CREATE SECURITY POLICY) and column-level controls are defined in T-SQL and must be recreated; they are not carried over by the Migration Assistant. Row-level security in Power BI semantic models is a separate layer and only restricts workspace Viewers.\n\nThe on-premises data gateway makes outbound connections only. It is not the only route: a virtual network data gateway and Fabric Mirroring are documented alternatives.",
+        "cost-drivers": "- Fabric capacity during coexistence, sized for the historical load peak.\n- Running the legacy platform and its licences until cutover.\n- Engineering effort to rebuild SSIS packages and cubes, which usually dominates.\n- Effort to fix T-SQL objects the Migration Assistant could not convert.\n- Reconciliation and parallel-run effort per wave.\n- Gateway machines and network bandwidth for the historical load.",
+        "validation": "- For every migrated table: row counts and control totals match the source.\n- For every converted view and procedure: results match on the same input data.\n- For every report: figures match the legacy report for an agreed period.\n- Row-level security is tested with real Viewer accounts for each role.\n- Key queries are timed against agreed targets, with statistics up to date.\n- Capacity utilisation during the load window is checked in the Fabric Capacity Metrics app."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Fabric capacity during the coexistence period, sized for the historical load",
+          "Dual running of old and new platforms until cutover",
+          "Effort to rebuild SSIS packages as pipelines, dataflows or notebooks",
+          "Effort to rebuild Analysis Services models as Power BI semantic models",
+          "Rework of T-SQL objects the Migration Assistant cannot convert",
+          "Gateway machines and bandwidth for data movement"
+        ],
+        "tradeoffs": [
+          "Rebuilding ETL costs more up front than lifting it, but removes legacy tooling; the lift option for SSIS in Fabric is limited and cannot reach on-premises sources.",
+          "Coexistence doubles some running cost until cutover but lets each wave be reconciled.",
+          "Fabric Warehouse keeps T-SQL skills and multi-table transactions; a lakehouse suits Spark teams but its SQL analytics endpoint is read-only."
+        ],
+        "limitations": [
+          "The Migration Assistant converts schema and code only; data, ETL, security and report connections are separate work.",
+          "T-SQL coverage in Fabric Warehouse differs from SQL Server (for example triggers and recursive queries were unsupported at the time of research); check the current T-SQL surface area page.",
+          "Some source data types are mapped to different types in the target and need checking.",
+          "No documented automated migration for on-premises SSAS; multidimensional cubes need redesign.",
+          "The Invoke SSIS Package activity cannot connect to on-premises systems or use custom components."
+        ],
+        "steps": [
+          "Inventory databases, SSIS packages, Analysis Services models and reports; classify by complexity.",
+          "Run the Fabric Migration Assistant on a DACPAC to assess T-SQL compatibility.",
+          "Stand up capacity, workspaces and the data gateway.",
+          "Fix unconverted objects and create the target schema.",
+          "Load historical data in batches and reconcile.",
+          "Rebuild ETL as pipelines, workload by workload.",
+          "Rebuild semantic models, recreate security and repoint reports.",
+          "Run old and new in parallel and reconcile.",
+          "Cut over, then decommission the legacy platform."
+        ]
+      },
+      "tokenNotes": "latency: 'near-real-time' could be added because Fabric Mirroring for SQL Server gives continuous replication during coexistence, but the scenario as written is batch; leave as is unless mirroring is made part of the reference design. skills: 'data-factory' is right; consider that SSIS skills do not carry over directly.",
+      "sources": [
+        {
+          "title": "Migrate with a DACPAC File or SQL Files - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/data-warehouse/migrate-using-upload-file",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Migration Assistant scope: DACPAC or SQL files in, new warehouse with translated T-SQL metadata out; SQL Server as a supported source"
+        },
+        {
+          "title": "Migration Strategy and Planning for Azure Synapse Dedicated SQL pools to Fabric - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/data-warehouse/migration-synapse-dedicated-sql-pool-planning",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Migration phases beyond schema: data ingestion, code, security and ETL cutover as separate steps"
+        },
+        {
+          "title": "T-SQL Surface Area in Fabric Data Warehouse - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/data-warehouse/tsql-surface-area",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Unsupported and partly supported T-SQL in Fabric Warehouse; no CREATE USER"
+        },
+        {
+          "title": "Use the Invoke SSIS Package activity in a pipeline (Preview) - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/data-factory/invoke-ssis-package-activity",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Invoke SSIS Package activity preview status and its limits"
+        },
+        {
+          "title": "Migrate Azure Analysis Services to Power BI - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/power-bi/enterprise/aas-pbi-migration-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Automated migration exists for Azure Analysis Services models to Power BI; nothing equivalent found for on-premises SSAS"
+        }
+      ],
+      "corrections": [
+        "Old text said 'schema and data move' as one step. Microsoft's Migration Assistant migrates schema and code metadata only; data movement is a separate step with other tools.",
+        "Old text said 'the gateway provides the only path from the data centre'. A virtual network data gateway and Fabric Mirroring for SQL Server are documented alternatives; the statement was removed.",
+        "Old text treated SSIS only as 'rebuild'. Added the Invoke SSIS Package activity as a documented but limited option (preview, packages in OneLake only, no on-premises or private-network connectivity).",
+        "Old text said semantic models 'replace SSAS cubes' without qualification. Documented automated migration covers Azure Analysis Services; on-premises SSAS has no equivalent tool in the results, so this is described as republish (tabular) or redesign (multidimensional).",
+        "Old text said T-SQL coverage 'differs' with no detail. Added the named assessment tool and concrete examples from the T-SQL surface area page, flagged as time-sensitive."
+      ],
+      "unconfirmed": [
+        "The Cloud Adoption Framework was cited as a source, but no CAF page specific to this migration surfaced in searches; the item now cites Fabric migration pages instead.",
+        "That tabular SSAS models can be deployed to Power BI through the XMLA endpoint with third-party tools is mentioned in search summaries in general terms only; no step-by-step official SSAS migration page was found."
+      ]
+    },
+    {
+      "slug": "microsoft-fabric",
+      "summary": "Microsoft's software-as-a-service analytics platform. Data Factory, Data Engineering, Data Warehouse, Real-Time Intelligence, Data Science, Databases and Power BI share one storage layer, OneLake, and draw compute from the same Fabric capacities.",
+      "sections": {
+        "concepts": "- **Tenant and OneLake**: each tenant has one OneLake, a single logical data lake built on Azure Data Lake Storage. Tables are stored in open Delta Parquet (Iceberg is also supported); files can be in any format.\n- **Capacity**: a pool of compute, measured in capacity units, that every workload in its workspaces shares.\n- **Workspace**: a container for items, assigned to a capacity, with Admin, Member, Contributor and Viewer roles.\n- **Items**: lakehouse, warehouse, pipeline, notebook, Dataflow Gen2, eventhouse, mirrored database, semantic model, report.\n- **Shortcuts**: references to data in another workspace or in external storage, without copying it.",
+        "how-it-works": "Every engine reads and writes the same OneLake files. A warehouse table written with T-SQL can be read by a Spark notebook, and a Direct Lake semantic model can read it for reports, without an export step.\n\nA lakehouse is Spark-first and exposes a read-only SQL analytics endpoint. A Fabric Warehouse is T-SQL-first with multi-table transactions, views and stored procedures. Both store Delta tables, and they can be combined in one workspace and queried across with three-part names.\n\nMirroring continuously replicates operational databases into OneLake; shortcuts give live read-only access without replication.",
+        "best-practices": "- Choose lakehouse or warehouse by the team's main skill (Spark or T-SQL) and by the need for multi-table transactions.\n- Separate environments into workspaces, and consider separate capacities for workloads that must not throttle each other.\n- Connect development workspaces to Git and promote with deployment pipelines or a Git-driven flow; use variable libraries for environment-specific values.\n- Watch the Fabric Capacity Metrics app for utilisation and throttling before resizing.\n- Enforce data access rules in OneLake security where they should apply to every engine.",
+        "limitations": "- Compute is shared per capacity: sustained overload throttles interactive requests first and background jobs later.\n- T-SQL in the Warehouse is a subset of SQL Server's surface area.\n- The lakehouse SQL analytics endpoint is read-only, and lakehouse tables support single-table transactions only.\n- On-premises data gateways cannot register when tenant-level private links are enabled.\n- Purview-based protection (labels, protection policies, data loss prevention) needs separate Purview licensing.\n- Features, preview status and regional availability change frequently; confirm against current documentation.",
+        "security": "- **Identity**: Microsoft Entra ID.\n- **Control plane**: workspace roles and item permissions (Read, ReadData, ReadAll, Write) decide who can manage and open items.\n- **Data plane**: OneLake security roles grant access to tables and folders, with optional row-level and column-level rules. Roles are grant-only and affect Viewers.\n- **SQL**: a warehouse or SQL analytics endpoint can enforce T-SQL permissions and row-level security.\n- **Network**: private links at tenant or workspace level for inbound access; managed private endpoints and data gateways for outbound access to sources.\n- **Governance**: sensitivity labels, data loss prevention, audit and lineage through Microsoft Purview.",
+        "cost-drivers": "- Capacity SKU size and running hours. F SKUs are bought through Azure, billed while running, can be paused, and can be reserved for steady use.\n- How workloads are spread: bursting lets jobs run faster than the SKU, and smoothing spreads their consumption over later time, so a heavy load reduces headroom afterwards.\n- OneLake storage volume.\n- Power BI licences for content authors, and for viewers on smaller capacities.\n- Optional Purview licensing."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Capacity SKU size and running hours (pause and reservation available on F SKUs)",
+          "Smoothed consumption from heavy background jobs",
+          "OneLake storage volume",
+          "Power BI licences for authors and, on smaller capacities, viewers",
+          "Microsoft Purview licensing for protection features"
+        ],
+        "tradeoffs": [
+          "One shared capacity is simple to buy and run, but workloads can throttle each other.",
+          "A managed service removes infrastructure work but offers fewer tuning and networking options than engines you run yourself.",
+          "Lakehouse and Warehouse overlap; choosing per team skill is flexible but needs a clear convention."
+        ],
+        "limitations": [
+          "Warehouse T-SQL is a subset of SQL Server T-SQL.",
+          "Lakehouse SQL analytics endpoint is read-only; multi-table transactions need a Warehouse.",
+          "On-premises data gateways cannot register with tenant-level private links enabled.",
+          "Features and regional availability change frequently; check current documentation."
+        ],
+        "compare": {
+          "Delivery model": "Software as a service",
+          "Primary skills": "SQL (T-SQL), Power BI (DAX), Spark (Python)",
+          "Storage format": "Delta Parquet tables in OneLake (Iceberg also supported); files in any format",
+          "Billing model": "Shared capacity (capacity units): pay-as-you-go through Azure with pause, or reserved; storage billed separately",
+          "Clouds": "Azure (shortcuts can reference data in Amazon S3 and Google Cloud Storage)"
+        }
+      },
+      "sources": [
+        {
+          "title": "What is Microsoft Fabric - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/fundamentals/microsoft-fabric-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "SaaS delivery, workload list, OneLake as the shared store"
+        },
+        {
+          "title": "OneLake, the unified data lake - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/onelake/onelake-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "One OneLake per tenant, built on ADLS, Delta Parquet and Iceberg table formats, shortcuts"
+        },
+        {
+          "title": "Warehouse and Lakehouse: A Decision Guide - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/fundamentals/decision-guide-lakehouse-warehouse",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Lakehouse versus Warehouse: Spark or T-SQL, read-only SQL endpoint, multi-table transactions"
+        },
+        {
+          "title": "Understand Microsoft Fabric licenses and capacity - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/enterprise/licenses",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Capacities, F SKUs bought through Azure, reservation, licence requirements"
+        },
+        {
+          "title": "Security in Microsoft Fabric - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/security/security-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Entra ID identity, workspace roles, item permissions, network security and Purview integration"
+        }
+      ],
+      "corrections": [
+        "Old text said 'OneLake stores data in Delta format'. OneLake stores tables in Delta Parquet and also supports Iceberg; files of any format can be stored, and bronze guidance is to keep the source format.",
+        "Old compare value 'Capacity (provisioned or pay-as-you-go)' was imprecise. F SKUs are pay-as-you-go through Azure with pause and resume, with optional reservation; storage is separate.",
+        "Old workload list omitted Data Science and Databases, which the overview page lists.",
+        "Old text had no security or cost content; added the documented two-plane permission model and the bursting, smoothing and throttling behaviour."
+      ],
+      "unconfirmed": [
+        "That OneLake storage is billed separately from capacity is supported in the search results only by a Microsoft Q&A answer (community), not an official billing page; it is kept in 'Billing model' because it is widely documented, but should be verified."
+      ]
+    },
+    {
+      "slug": "power-bi",
+      "summary": "Microsoft's business intelligence service for semantic models, reports and dashboards. In Fabric it is the reporting workload: semantic models hold tables, relationships and DAX measures, and can import data, query the source directly, or read Delta tables in OneLake through Direct Lake.",
+      "sections": {
+        "concepts": "- **Semantic model**: tables, relationships, DAX measures and security roles. Reports connect to it.\n- **Storage modes**: Import (data cached in the model), DirectQuery (queries sent to the source), Direct Lake (column data loaded on demand from Delta tables in OneLake), and Dual (a table that can act as either Import or DirectQuery).\n- **Composite model**: a model whose tables use different storage modes or sources.\n- **Workspace**: where models and reports are published, with Admin, Member, Contributor and Viewer roles.\n- **XMLA endpoint**: lets external tools deploy and manage models on a capacity.",
+        "how-it-works": "Import copies the data into the model on each refresh and gives the most modelling flexibility. DirectQuery leaves data in the source and translates each visual into source queries. Direct Lake reads the Parquet files behind Delta tables directly; its refresh (framing) only updates which file versions the model points at.\n\nDirect Lake comes in two variants. On OneLake, it never falls back to DirectQuery. On the SQL analytics endpoint, it can fall back, for example when a table is a SQL view or has SQL row-level security. Each table must stay within guardrails for files, row groups and rows that depend on the capacity SKU.",
+        "best-practices": "- Model data as a star schema; it is the design Power BI is optimised for.\n- Pick Import for small or heavily transformed data, Direct Lake for large Delta tables already in OneLake, DirectQuery when data must stay in the source.\n- Use Dual mode for shared dimensions in composite models to keep relationships regular.\n- Define each measure once in the model, not per report.\n- Enable the large model storage format when managing models through the XMLA endpoint with write operations.\n- Test every security role, including unexpected values for dynamic rules.",
+        "limitations": "- Relationships between Import and DirectQuery tables are limited relationships, with performance and behaviour differences.\n- Row-level security cannot be defined on tables that come from a remote source model in a composite model.\n- Direct Lake guardrails are per table and vary by SKU; check current documentation for the values.\n- Dynamic row-level security makes caching per user, which costs performance.\n- Models migrated or deployed through XMLA cannot always be downloaded back as a Power BI Desktop file.",
+        "security": "Row-level security is defined as roles with DAX filter expressions in the semantic model. Roles are created in Power BI Desktop; members are assigned in the service after publishing.\n\nRLS only restricts users with Viewer permission. Workspace Admins, Members and Contributors see all data, so test with a Viewer account, using View As in Desktop or Test as role in the service.\n\nWith Direct Lake and single sign-on, users need access to the underlying data and could bypass model rules; use a fixed-identity connection or OneLake security for those cases.",
+        "cost-drivers": "- Per-user licences (Pro or Premium Per User) for everyone who authors and shares content.\n- Viewer licensing: on larger Fabric capacities viewers can use a free licence; on smaller capacities each viewer needs a paid licence. Check the current threshold.\n- Capacity consumption from refreshes (background) and report queries (interactive).\n- Model size in memory for Import models.\n- Source system load and cost for DirectQuery models."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Per-user licences for authors",
+          "Viewer licences on capacities below the free-viewer threshold",
+          "Capacity consumed by refreshes and interactive queries",
+          "Import model size",
+          "Source query load for DirectQuery"
+        ],
+        "tradeoffs": [
+          "Import is fastest and most flexible but duplicates data and needs refreshes.",
+          "DirectQuery is always current but slower and loads the source.",
+          "Direct Lake avoids data copies but depends on well-maintained Delta tables and has guardrails."
+        ],
+        "limitations": [
+          "RLS applies only to workspace Viewers.",
+          "Limited relationships across storage modes in composite models.",
+          "Direct Lake per-table guardrails depend on capacity SKU.",
+          "Direct Lake on the SQL analytics endpoint can silently fall back to DirectQuery."
+        ],
+        "compare": {
+          "Delivery model": "Software as a service (Power BI service) with a desktop authoring tool",
+          "Primary skills": "DAX, Power Query, data modelling",
+          "Storage format": "In-memory columnar model (Import), or Delta Parquet in OneLake read through Direct Lake",
+          "Billing model": "Per-user licences, plus shared Fabric capacity for larger audiences and Fabric features",
+          "Clouds": "Azure (Microsoft-hosted service); connects to sources on any cloud or on-premises through gateways"
+        }
+      },
+      "sources": [
+        {
+          "title": "Semantic model modes in the Power BI service - Power BI",
+          "url": "https://learn.microsoft.com/en-us/power-bi/connect-data/service-dataset-modes-understand",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Semantic model modes: Import, DirectQuery, composite"
+        },
+        {
+          "title": "Direct Lake overview - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/fundamentals/direct-lake-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Direct Lake variants, fallback and guardrails"
+        },
+        {
+          "title": "Row-level security (RLS) with Power BI - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/security/service-admin-row-level-security",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "RLS roles with DAX filters, member assignment in the service, Viewer-only enforcement, Test as role"
+        },
+        {
+          "title": "Use composite models in Power BI Desktop - Power BI",
+          "url": "https://learn.microsoft.com/en-us/power-bi/transform-model/desktop-composite-models",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Composite models, Dual mode, limited relationships, licence requirements across chained models"
+        },
+        {
+          "title": "Power BI Licensing Guide for Organizations - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/enterprise/powerbi/service-admin-power-bi-licensing",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Per-user licences and viewer licensing by capacity size"
+        }
+      ],
+      "corrections": [
+        "Old security text said RLS is 'tested per role' without stating that it only applies to Viewers; workspace Admins, Members and Contributors are not filtered.",
+        "Old storage-mode list omitted Dual mode and composite models, and did not say that Direct Lake has two variants with different fallback behaviour.",
+        "Old item had no compare block although it is a technology item; added the five standard keys."
+      ],
+      "unconfirmed": []
+    },
+    {
+      "slug": "star-schema-semantic-model",
+      "summary": "Model reporting data as fact tables surrounded by dimension tables, with measures defined once in a semantic model. Microsoft's Power BI guidance treats the star schema as the design the engine is optimised for: dimensions filter and group, facts are summarised.",
+      "sections": {
+        "context": "Power BI semantic models can be built on any table shape, but Microsoft's guidance is that a star schema gives the best query performance and the most usable model. Flat, wide or fully normalised source tables make filters travel through more relationships, clutter the field list and make it harder to define a measure once and reuse it.\n\nThe pattern applies equally to the gold layer of a lakehouse or warehouse and to the semantic model built on it.",
+        "concepts": "- **Fact table**: one row per event or observation (a sale, a stock level), at a declared grain. Holds dimension keys and numeric columns to summarise.\n- **Dimension table**: one row per business entity (product, customer, date), with a unique key and descriptive columns used to filter and group.\n- **Surrogate key**: a generated key that is not in the source. It gives a dimension a single unique column and insulates the model from source key changes.\n- **Measure**: in Power BI, a DAX formula that summarises; this differs from the dimensional-modelling use of the word for a numeric fact column.\n- **Role-playing dimension**: one dimension related to a fact by several keys, such as order date and ship date.",
+        "how-it-works": "Power BI has no property that marks a table as fact or dimension. The relationships decide it: the \"one\" side of a one-to-many relationship is the dimension and the \"many\" side is the fact. Filters flow from dimension to fact.\n\nOnly one relationship between two tables can be active. For role-playing dimensions, the usual design is a separate copy of the dimension per role, at the cost of some extra model size.\n\nSnowflaked dimensions (a dimension split over several normalised tables) can be kept as they are or merged into one table; a single table per dimension is generally preferred.",
+        "best-practices": "- Declare the grain of every fact table and keep it consistent.\n- Give every dimension a single unique key column; add a surrogate key where the source has none or uses a composite key.\n- Flatten snowflaked dimensions into one table unless there is a clear reason not to.\n- Create one dimension table per role for role-playing dimensions such as dates.\n- Define each measure once, in the model, as an explicit DAX measure.\n- Build the star in the gold layer so every semantic model and SQL consumer sees the same tables.",
+        "limitations": "- Duplicating a dimension for each role increases model size.\n- A star schema needs upstream transformation work; source tables rarely arrive in this shape.\n- Many-to-many relationships and facts at different grains need extra design (bridge tables or separate fact tables) and are easy to get wrong.\n- In Fabric Warehouse, primary and foreign key constraints can be declared only as not enforced, so key uniqueness must be guaranteed by the load process."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "More modelling and transformation work up front in exchange for simpler, faster and more consistent reports.",
+          "Separate dimension copies for each role are easy to use but enlarge the model.",
+          "Flattened dimensions are easier to query; snowflaked ones store less but lengthen filter chains."
+        ],
+        "limitations": [
+          "Only one active relationship between two tables.",
+          "Role-playing dimensions duplicate data.",
+          "Warehouse key constraints are not enforced, so the load must guarantee unique keys."
+        ]
+      },
+      "sources": [
+        {
+          "title": "Understand star schema and the importance for Power BI - Power BI",
+          "url": "https://learn.microsoft.com/en-us/power-bi/guidance/star-schema",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Fact and dimension roles, relationship-driven table type, measures, surrogate keys, snowflake and role-playing guidance"
+        },
+        {
+          "title": "Modeling Dimension Tables in Warehouse - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/data-warehouse/dimensional-modeling-dimension-tables",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Surrogate keys and dimension design in Fabric Warehouse"
+        },
+        {
+          "title": "Modeling Fact Tables in Warehouse - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/data-warehouse/dimensional-modeling-fact-tables",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Fact table design and grain in Fabric Warehouse"
+        },
+        {
+          "title": "T-SQL Surface Area in Fabric Data Warehouse - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/data-warehouse/tsql-surface-area",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Key constraints in Fabric Warehouse only as NOT ENFORCED"
+        }
+      ],
+      "corrections": [
+        "Old text said flatly 'Use surrogate keys'. The Power BI guidance is narrower: a dimension needs a single unique column, and a surrogate key is added when the source lacks one; the Fabric warehouse guidance recommends them to insulate from source changes. Reworded.",
+        "Old text did not distinguish a Power BI measure (DAX formula) from a dimensional-modelling measure (fact column); the Microsoft guidance makes this distinction explicitly.",
+        "Added the documented rule that table type is determined by relationship cardinality, and the one-active-relationship limit behind role-playing dimension design."
+      ],
+      "unconfirmed": [
+        "'Reports built on wide or normalised tables are slow and give inconsistent numbers' is stronger than the sources; replaced with the documented statement that star schemas are the design Power BI is optimised for."
+      ]
+    },
+    {
+      "slug": "medallion-architecture",
+      "summary": "Organise lakehouse data in three layers, bronze (raw), silver (validated and conformed) and gold (business-ready), so that structure and quality improve step by step and downstream layers can be rebuilt from bronze. Documented by both Databricks and Microsoft Fabric.",
+      "sections": {
+        "context": "Raw data is messy and changes shape, while consumers need trusted, modelled data. Mixing both in one place makes lineage, auditing and reprocessing hard.\n\nThe medallion pattern (also called multi-hop) is a data design pattern, not a product feature. Databricks describes it as progressively improving the structure and quality of data as it moves through the layers; Microsoft recommends it for Fabric lakehouses. Neither vendor treats exactly three layers as mandatory.",
+        "how-it-works": "- **Bronze**: raw, unvalidated data persisted as it arrives, with little or no clean-up. It is the source of truth for reprocessing and audit. Databricks suggests keeping most fields as flexible types so schema changes do not drop data.\n- **Silver**: validated, cleaned and enriched data. Typical work is schema enforcement, null handling, deduplication, type casting and joining sources.\n- **Gold**: datasets shaped for business use, usually aggregated or dimensionally modelled and optimised for queries and dashboards. Some organisations keep several gold layers for different departments.",
+        "implementation": "**Microsoft Fabric**\n- Create a lakehouse per layer, or one lakehouse with a schema per layer. Gold can also be a Fabric Warehouse.\n- Keep bronze in the source format; use a shortcut rather than a copy when data is already in OneLake, ADLS Gen2, Amazon S3 or Google Cloud Storage.\n- Use Delta tables for silver and gold.\n- Materialized lake views are a declarative way to define the flow between layers.\n\n**Databricks**\n- Layers are typically schemas or catalogs of Delta tables, populated by jobs or declarative pipelines.\n- Build everything downstream from bronze so later layers can be recreated.",
+        "best-practices": "- Do not alter data in bronze; treat it as the record of what was received.\n- Build silver and gold only from the layer before, so they can be rebuilt.\n- Apply data quality checks when moving data from bronze to silver.\n- Use Delta tables for silver and gold, and keep them compacted.\n- Check that every gold output has lineage through silver back to bronze.\n- Set access per layer: few people need bronze, most consumers need only gold. Separate lakehouses or workspaces make this easier to enforce.",
+        "limitations": "- Each layer adds storage and processing, and latency between arrival and availability in gold.\n- Small or simple solutions may not need all three layers.\n- The pattern says nothing about how to model gold; a star schema or other design is still needed.\n- Separate items per layer give clearer separation but more to deploy and operate.\n- Layer names are a convention; teams must agree what quality each layer guarantees."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "Reprocessing and audit are easier because raw data is kept, at the cost of extra storage.",
+          "Clear quality contract per layer, at the cost of more pipelines and added latency.",
+          "Separate lakehouses per layer isolate access; a single lakehouse with schemas is simpler to run."
+        ],
+        "limitations": [
+          "Adds storage, compute and latency for each hop.",
+          "Does not prescribe the gold data model.",
+          "May be more structure than a small solution needs."
+        ]
+      },
+      "tokenNotes": "The item cites key 'fabric' and 'databricks' documentation home pages; replace with the two specific medallion pages below.",
+      "sources": [
+        {
+          "title": "What is the medallion lakehouse architecture?",
+          "url": "https://docs.databricks.com/aws/en/lakehouse/medallion",
+          "publisher": "Databricks",
+          "sourceType": "vendor-official",
+          "supports": "Definition of the pattern, layer responsibilities, rebuild-from-bronze, multiple gold layers"
+        },
+        {
+          "title": "Implement Medallion Lakehouse Architecture in Fabric - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/onelake/onelake-medallion-lakehouse-architecture",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Fabric implementation: lakehouse per layer, gold as warehouse, shortcuts for bronze, Delta for silver and gold"
+        },
+        {
+          "title": "Best practices for reliability",
+          "url": "https://docs.databricks.com/aws/en/lakehouse-architecture/reliability/best-practices",
+          "publisher": "Databricks",
+          "sourceType": "vendor-official",
+          "supports": "Layered architecture as a reliability practice on Databricks"
+        }
+      ],
+      "corrections": [
+        "Old text described bronze as 'append-only'. The sources say raw data is stored as it arrives and not changed; they do not require append-only ingestion. Reworded.",
+        "Old text presented three layers and a lakehouse per layer as the only shape. Fabric guidance documents gold as a warehouse and a single lakehouse with schemas per layer; Databricks documents multiple gold layers.",
+        "Added Fabric's bronze guidance (keep source format, prefer shortcuts over copies), which the old text did not have."
+      ],
+      "unconfirmed": [
+        "'Give each layer its own access policy' is not stated in those words; the sources support separating layers into different lakehouses for clearer separation. Kept as a recommendation worded around that."
+      ]
+    }
+  ],
+  "newItems": [
+    {
+      "slug": "direct-lake",
+      "type": "concept",
+      "title": "Direct Lake",
+      "summary": "A Power BI semantic model storage mode in Microsoft Fabric that loads column data on demand straight from Delta tables in OneLake, instead of importing a copy or sending queries to a SQL engine.",
+      "tags": [
+        "fabric",
+        "power-bi",
+        "delta"
+      ],
+      "sections": {
+        "concepts": "- **Framing**: the refresh operation. The model reads Delta table metadata and repoints itself at the latest Parquet files. Queries see the data as of the last successful framing.\n- **Transcoding**: loading column data from Parquet into memory when a query first needs it.\n- **Guardrails**: per-table limits on Parquet files, row groups and rows, which depend on the capacity SKU.\n- **Fallback**: switching a query to DirectQuery through the SQL analytics endpoint.\n- **Two variants**: Direct Lake on OneLake (recommended for new models) and Direct Lake on the SQL analytics endpoint.",
+        "how-it-works": "Direct Lake on OneLake reads Delta tables directly and never falls back to DirectQuery. If a table exceeds a guardrail, refresh fails and the model cannot be queried until the table is optimised.\n\nDirect Lake on the SQL analytics endpoint can fall back, for example when a table is a SQL view or the source enforces SQL row-level security or other granular access control. The DirectLakeBehavior setting controls this: Automatic falls back silently and queries run slower; DirectLakeOnly returns an error instead.",
+        "best-practices": "- Keep Delta tables compacted so they stay within the guardrails.\n- Materialise SQL views as Delta tables.\n- Put row-level and object-level security in the semantic model or in OneLake security, not in SQL endpoint policies.\n- Set the model to Direct Lake only in test so that fallback shows up as an error.\n- Use Import instead when the data is small or needs heavy model-side transformation.",
+        "security": "By default Direct Lake uses single sign-on, so each user needs access to the underlying data. Those users could also query the data directly and bypass rules defined only in the semantic model.\n\nA fixed-identity cloud connection lets consumers use the model without access to the lakehouse or warehouse; pair it with model row-level security. To have one rule apply to every engine, define it in OneLake security.",
+        "limitations": "- Guardrail values vary by SKU and change; check current documentation.\n- One table over a guardrail affects the whole model.\n- Fallback on the SQL endpoint variant is silent by default and can hide performance problems.\n- Requires data to be in Delta tables in OneLake (directly or through shortcuts)."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "No data copy and near-instant refresh, but report speed depends on Delta table maintenance.",
+          "Single sign-on gives per-user source authorisation but lets users bypass model-only rules; fixed identity does the reverse."
+        ],
+        "limitations": [
+          "Per-table guardrails that depend on capacity SKU.",
+          "Silent DirectQuery fallback on the SQL analytics endpoint variant.",
+          "No fallback, and a hard failure, on the OneLake variant when guardrails are exceeded."
+        ]
+      },
+      "relationships": [
+        [
+          "part_of",
+          "power-bi"
+        ],
+        [
+          "depends_on",
+          "delta-lake"
+        ],
+        [
+          "related_to",
+          "microsoft-fabric"
+        ],
+        [
+          "related_to",
+          "star-schema-semantic-model"
+        ]
+      ],
+      "sources": [
+        {
+          "title": "Direct Lake overview - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/fundamentals/direct-lake-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Variants, guardrails, fallback, recommended option for new models"
+        },
+        {
+          "title": "How Direct Lake works - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/fundamentals/direct-lake-how-it-works",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Framing, transcoding and DirectLakeBehavior"
+        },
+        {
+          "title": "Integrate Direct Lake Security - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/fundamentals/direct-lake-security-integration",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Single sign-on versus fixed identity, RLS placement"
+        }
+      ]
+    },
+    {
+      "slug": "onelake",
+      "type": "technology",
+      "title": "OneLake",
+      "summary": "The single logical data lake that comes with every Microsoft Fabric tenant. All Fabric engines read and write the same copy of the data in open table formats, and shortcuts reference external data without copying it.",
+      "tags": [
+        "fabric",
+        "storage",
+        "delta"
+      ],
+      "sections": {
+        "concepts": "- One OneLake per tenant, built on Azure Data Lake Storage.\n- Tables are stored as Delta Parquet (Iceberg is also supported); lakehouse and warehouse tables use the same format.\n- **Shortcut**: a reference to data elsewhere in OneLake or in external storage such as ADLS Gen2, Amazon S3, Google Cloud Storage or Dataverse. Changes at the source are visible immediately.\n- **Mirroring**: continuous replication of an operational database into OneLake as Delta tables.",
+        "how-it-works": "T-SQL, Spark and the Power BI engine all work against the same files, so a table written by one engine can be read by another without export. Shortcuts make external or cross-workspace data appear in a lakehouse as if it were local.\n\nUse a shortcut for live read-only access without replication, mirroring for operational databases that need a continuously updated analytics copy, and a copy (pipeline or Copy job) when data must be transformed or persisted in Fabric.",
+        "security": "OneLake security roles grant access to tables, folders or schemas and can add row-level and column-level rules. Roles are grant-only. Within a role a user sees only what all three checks allow. Roles affect workspace Viewers; Admins, Members and Contributors have write access to the item.\n\nA SQL analytics endpoint can run in user identity mode, where OneLake security governs reads, or delegated identity mode, where SQL permissions do.",
+        "limitations": "- Shortcuts are references; table maintenance has to happen where the data lives.\n- OneLake row-level security has documented restrictions compared with SQL or semantic-model RLS; check current documentation before relying on dynamic rules.\n- Removing the default reader role can remove data access for users who relied on it."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Stored data volume",
+          "Retained history and unvacuumed Delta files",
+          "Capacity consumed by engines reading and writing the data"
+        ],
+        "compare": {
+          "Delivery model": "Software as a service (part of Microsoft Fabric)",
+          "Primary skills": "SQL, Spark, Power BI",
+          "Storage format": "Delta Parquet tables (Iceberg also supported); files in any format",
+          "Billing model": "Storage by volume, separate from Fabric capacity compute",
+          "Clouds": "Azure (shortcuts to Amazon S3 and Google Cloud Storage)"
+        }
+      },
+      "relationships": [
+        [
+          "part_of",
+          "microsoft-fabric"
+        ],
+        [
+          "uses",
+          "delta-lake"
+        ],
+        [
+          "related_to",
+          "medallion-architecture"
+        ]
+      ],
+      "sources": [
+        {
+          "title": "OneLake, the unified data lake - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/onelake/onelake-overview",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Single logical lake per tenant, ADLS foundation, Delta and Iceberg formats, shortcuts"
+        },
+        {
+          "title": "OneLake security roles, permissions, and scopes - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/onelake/security/data-access-control-model",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "OneLake security roles, grant-only model, evaluation order"
+        },
+        {
+          "title": "OneLake Security for SQL analytics endpoints - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/onelake/security/sql-analytics-endpoint-onelake-security",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "User identity and delegated identity modes on the SQL analytics endpoint"
+        }
+      ]
+    },
+    {
+      "slug": "fabric-capacity-management",
+      "type": "concept",
+      "title": "Fabric capacity: bursting, smoothing and throttling",
+      "summary": "A Fabric capacity is a shared pool of compute for every workload in its workspaces. Bursting lets operations run faster than the SKU, smoothing spreads their consumption over later time, and throttling applies when accumulated consumption stays above the limit.",
+      "tags": [
+        "fabric",
+        "capacity",
+        "cost"
+      ],
+      "sections": {
+        "concepts": "- **Capacity unit (CU)**: the measure of compute a SKU provides.\n- **Bursting**: an operation can temporarily use more compute than the SKU provisions.\n- **Smoothing**: consumption is spread over future time points. Interactive operations are smoothed over minutes; background operations over a much longer window (documented as 24 hours at the time of research).\n- **Throttling**: applied per capacity, so an overloaded capacity slows down while others are unaffected.",
+        "how-it-works": "Smoothing changes the accounting, not the execution speed. A capacity can borrow a short amount of future capacity without any effect. If overload continues, the documented stages are: interactive requests are delayed, then interactive requests are rejected, then background jobs are rejected as well.\n\nThe Fabric Capacity Metrics app shows utilisation, the throttling charts and the operations that consumed the most in each time point. Utilisation above the limit line does not by itself mean throttling; read the throttling chart.",
+        "best-practices": "- Schedule heavy background loads away from peak reporting hours.\n- Put workloads that must not affect each other on separate capacities.\n- Review the Capacity Metrics app before resizing; fix the most expensive items first.\n- Pause F SKU capacities that are idle outside working hours, where that suits the workload.\n- Use reservations for steady, predictable capacities.",
+        "limitations": "- Bursting and smoothing do not apply to Spark when Autoscale Billing for Spark is enabled.\n- Fabric Data Warehouse has its own burst ceiling tied to SKU size.\n- Thresholds, windows and optional overage features change; check current documentation."
+      },
+      "attributes": {
+        "costDrivers": [
+          "SKU size",
+          "Running hours",
+          "Volume of background processing",
+          "Peak interactive load"
+        ],
+        "tradeoffs": [
+          "One shared capacity is cheaper and simpler; separate capacities isolate workloads from each other.",
+          "Smoothing avoids buying for the peak, but a heavy job reduces headroom for hours afterwards."
+        ]
+      },
+      "relationships": [
+        [
+          "part_of",
+          "microsoft-fabric"
+        ],
+        [
+          "related_to",
+          "fabric-lakehouse-enterprise-bi"
+        ]
+      ],
+      "sources": [
+        {
+          "title": "Understand capacity throttling and smoothing - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/enterprise/throttling",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Bursting, smoothing windows, staged throttling, per-capacity scope"
+        },
+        {
+          "title": "What is the Microsoft Fabric Capacity Metrics app? - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/enterprise/metrics-app",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Capacity Metrics app pages and how to read utilisation versus throttling"
+        },
+        {
+          "title": "Pause and resume your Fabric capacity - Microsoft Fabric",
+          "url": "https://learn.microsoft.com/en-us/fabric/enterprise/pause-resume",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Pause and resume on F SKUs and the effect on billing"
+        }
+      ]
+    }
+  ]
+}

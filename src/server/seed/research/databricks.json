@@ -1,1 +1,454 @@
-{"cluster":"databricks","researchedOn":"2026-11-11","items":[],"newItems":[]}
+{
+  "cluster": "databricks",
+  "researchedOn": "2026-11-11",
+  "items": [
+    {
+      "slug": "azure-databricks-lakehouse-private",
+      "summary": "A lakehouse on Azure Databricks: Delta tables in ADLS Gen2 governed by Unity Catalog, a workspace deployed into your own virtual network (VNet injection) with secure cluster connectivity and Private Link for user and compute traffic, pipelines built with Lakeflow pipelines and Lakeflow Jobs, and serving through Databricks SQL warehouses.",
+      "sections": {
+        "context": "A regulated organisation wants one platform for data engineering, data science and BI, with no traffic over the public internet and one set of permissions across workspaces.\n\nThis design fits when:\n\n- There is a platform team able to own networking, DNS, identity and infrastructure as code.\n- Workloads mix Spark, SQL and machine learning.\n- Data must stay in storage accounts the organisation controls.\n\nIt is a poor fit for a small team that only needs SQL reporting, because the network isolation adds deployment and troubleshooting work that a simpler managed service avoids.",
+        "concepts": "- **Control plane and compute plane.** The control plane (web application, backend services) runs in the Azure Databricks account. Classic compute runs in a virtual network in your subscription. Serverless compute runs in a compute layer in the Azure Databricks account, not in your VNet.\n- **VNet injection.** The workspace's classic compute is deployed into two dedicated subnets (host and container) of a VNet you own. The subnets are delegated to `Microsoft.Databricks/workspaces` and cannot be shared with other workspaces or resources.\n- **Secure cluster connectivity.** Clusters open outbound-only connections to the control plane; no inbound ports are open.\n- **Private Link.** Three separate connection types: inbound (front-end) for users, classic (back-end) for cluster-to-control-plane traffic, and outbound for serverless compute reaching your Azure resources.",
+        "how-it-works": "1. Users reach the workspace through a front-end private endpoint, usually placed in a transit (hub) VNet. A separate `browser_authentication` private endpoint handles Microsoft Entra ID sign-in callbacks.\n2. Classic clusters in the injected VNet reach the control plane through a back-end private endpoint in the workspace VNet, so REST API and secure cluster connectivity relay traffic stays on the Microsoft backbone.\n3. Unity Catalog reaches ADLS Gen2 through an access connector for Azure Databricks (a managed identity) registered as a storage credential, with external locations pointing at container paths.\n4. Data lands in bronze Delta tables (Auto Loader or connectors), is refined by Lakeflow pipelines or jobs, and gold tables are queried through SQL warehouses.\n5. Serverless compute needs its own private connectivity configuration to reach firewalled storage; VNet injection does not cover it.",
+        "implementation": "1. Build the network first: hub and spoke VNets, private DNS zones, and an explicit outbound method for the workspace subnets (Microsoft recommends a NAT gateway; an existing workspace cannot be converted to VNet injection later).\n2. Deploy the workspace with VNet injection and secure cluster connectivity; add private endpoint subnets and the front-end, back-end and browser-authentication endpoints.\n3. Set up identity: automatic identity management from Microsoft Entra ID (or SCIM where it does not apply).\n4. Create the access connector, storage credentials, external locations, catalogs and schemas in Unity Catalog.\n5. Build ingestion, then silver and gold pipelines.\n6. Create SQL warehouses and grant access to groups.\n7. Put workspace infrastructure in Terraform and jobs/pipelines in bundles (Declarative Automation Bundles, formerly Databricks Asset Bundles).",
+        "prerequisites": "- Premium plan workspace (required for Private Link, customer-managed keys and automatic identity management; check current documentation for tier requirements).\n- Rights to create or join subnets on the target VNet (Network Contributor or an equivalent custom role).\n- An address plan: subnet CIDR ranges cannot be changed after the workspace is deployed, so size the two workspace subnets for peak cluster node count.\n- Private DNS design agreed with the network team, including how workspace URLs resolve from on-premises.\n- A decision on which compute types are allowed (classic only, or classic plus serverless) because their network paths differ.",
+        "security": "- **Identity.** Users, groups and service principals come from Microsoft Entra ID. Microsoft recommends automatic identity management; SCIM provisioning remains for cases such as cross-tenant identities. Do not provision the same identity through both.\n- **Data access.** Unity Catalog grants privileges on catalogs, schemas, tables and volumes; row filters and column masks restrict rows and column values. Storage is reached with the access connector's managed identity, not account keys.\n- **Network.** Restrict the storage accounts with firewalls and private endpoints. Remember the `browser_authentication` endpoint or sign-in fails on a fully private workspace.\n- **Encryption.** Customer-managed keys are three separate features: managed services (control-plane data), the workspace storage account (DBFS root) and managed disks for classic compute. Keys live in Azure Key Vault or Managed HSM.\n- **Audit.** Unity Catalog audit events are read from the audit log system table.",
+        "limitations": "- DNS and routing are the usual failure points; front-end and back-end endpoints, the authentication endpoint and storage endpoints all need correct private DNS records.\n- Serverless compute does not run in the injected VNet. A design that says no public endpoints must separately configure serverless private connectivity or disallow serverless features.\n- Row filters and column masks cannot be applied to views and restrict some operations on protected tables (for example clones, time travel and some sharing scenarios); check the limitations page before relying on them for shared data.\n- Subnet ranges are fixed after deployment.\n- Running cost depends on compute policies, warehouse sizing and job design more than on storage.",
+        "validation": "- From a machine inside the network, resolve the workspace URL and storage account names and confirm they return private addresses; from outside, confirm access is refused.\n- Sign in through the browser on the private path to prove the authentication endpoint works.\n- Start a classic cluster and confirm it reaches the control plane and reads an external location.\n- If serverless is allowed, run a serverless SQL warehouse query against firewalled storage.\n- Run one source through bronze, silver and gold with sample data.\n- Test grants, a row filter and a column mask with a user from each role.\n- After a load window, query the audit, lineage and billing system tables."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Compute consumed by jobs, pipelines, SQL warehouses and interactive clusters",
+          "Idle time of clusters and warehouses (auto-stop settings)",
+          "Choice of serverless versus classic compute for each workload",
+          "ADLS Gen2 storage volume and transactions, including retained Delta history",
+          "Private endpoints, NAT gateway or firewall, and data processed through them"
+        ],
+        "tradeoffs": [
+          "Flexible and open, but needs platform engineering skills to run well.",
+          "Network isolation adds deployment and troubleshooting effort, mostly in DNS and routing.",
+          "Serverless compute starts fast and removes cluster management, but it runs outside your VNet and needs separate private connectivity."
+        ],
+        "limitations": [
+          "An existing workspace cannot be converted to VNet injection; subnet ranges cannot be changed after deployment.",
+          "VNet injection covers classic compute only; serverless compute uses a different network path.",
+          "Row filters and column masks cannot be applied to views and block some operations on protected tables.",
+          "Cost depends heavily on compute policies and job design."
+        ],
+        "steps": [
+          "Deploy the landing zone network (hub-spoke, private DNS, outbound path).",
+          "Deploy the workspace with VNet injection, secure cluster connectivity and Private Link endpoints (front-end, back-end, browser authentication).",
+          "Configure identity sync from Microsoft Entra ID.",
+          "Create the access connector, storage credentials, external locations, catalogs and schemas in Unity Catalog.",
+          "Build ingestion into bronze with Auto Loader or connectors.",
+          "Build silver and gold with Lakeflow pipelines or jobs.",
+          "Expose gold through Databricks SQL warehouses.",
+          "Automate infrastructure with Terraform and jobs/pipelines with bundles.",
+          "Validate name resolution, access controls and system tables before go-live."
+        ]
+      },
+      "tokenNotes": "The 'security' attribute contains 'dr', which vocab.ts defines under the availability group, not compliance/identity/network. Keep it only if the Finder scores the availability field against this attribute; otherwise it never matches. No other token looks wrong.",
+      "sources": [
+        { "title": "Deploy Azure Databricks in your Azure virtual network (VNet injection) - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/security/network/classic/vnet-inject", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Two dedicated delegated subnets, fixed CIDR after deployment, required network role, outbound connectivity, no conversion of existing workspaces." },
+        { "title": "Private Link concepts - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/security/network/concepts/private-link", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Inbound, classic and outbound Private Link types, browser_authentication endpoint, transit VNet, secure cluster connectivity." },
+        { "title": "High-level architecture - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/getting-started/high-level-architecture", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Control plane versus classic and serverless compute planes; workspace storage account." },
+        { "title": "Connect to an Azure Data Lake Storage Gen2 (ADLS Gen2) external location - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/connect/unity-catalog/cloud-storage/external-locations-adls", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Access connector managed identity, storage credential and external location setup." },
+        { "title": "Customer-managed keys for encryption - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/security/keys/customer-managed-keys", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Three customer-managed key features and Key Vault / Managed HSM support." }
+      ],
+      "corrections": [
+        "Old text named 'Delta Live Tables'. The documentation now calls the product Lakeflow pipelines (also written Lakeflow Spark Declarative Pipelines); existing DLT code runs without migration. Text and step labels updated; the diagram node 'Azure Databricks (Spark, Delta Live Tables)' should be relabelled too.",
+        "Old text named 'Databricks Workflows' as the orchestrator. Current documentation calls it Lakeflow Jobs.",
+        "Old text said 'Asset Bundles'. Current documentation calls them Declarative Automation Bundles (formerly Databricks Asset Bundles).",
+        "Old text implied one set of private endpoints makes the workspace private. There are separate front-end, back-end and browser-authentication endpoints, and serverless compute is not in the injected VNet and needs its own private connectivity.",
+        "Old text and diagram said identities sync via SCIM. Microsoft now recommends automatic identity management from Microsoft Entra ID; SCIM remains for cases it does not cover (for example cross-tenant identities).",
+        "Old text said monitoring through 'Azure Monitor / system tables'. Unity Catalog audit events are not delivered through Azure diagnostic settings; they are read from the audit log system table.",
+        "Old text said Unity Catalog grants access at 'row and column level' without qualification. This is done with row filters and column masks, which cannot be applied to views and limit several operations."
+      ],
+      "unconfirmed": [
+        "'Public network access is disabled on storage and the workspace' as a single switch: the exact workspace settings (public network access, required NSG rules) were not confirmed from search results; the new text describes the endpoints instead.",
+        "Azure Data Factory as an ingestion option and Databricks ML / MLflow details shown in the diagram were not researched in this pass.",
+        "Hub firewall egress design and ExpressRoute specifics were not researched in this pass."
+      ]
+    },
+    {
+      "slug": "databricks",
+      "summary": "A data and AI platform built on Apache Spark and Delta Lake. A Databricks-managed control plane runs the workspace; compute runs either as classic compute in your cloud account or as serverless compute in the Databricks account. Unity Catalog governs data, Databricks SQL warehouses serve SQL and BI, and Lakeflow covers ingestion, pipelines and jobs.",
+      "sections": {
+        "concepts": "- **Control plane.** The web application and backend services, run by Databricks in its own account.\n- **Classic compute plane.** Clusters and classic/pro SQL warehouses run in a virtual network in your cloud account.\n- **Serverless compute plane.** Compute runs in a layer inside the Databricks account; traffic between it and the control plane stays on the cloud provider backbone.\n- **Workspace.** The environment where notebooks, jobs, pipelines and warehouses live.\n- **Unity Catalog.** Account-level governance for catalogs, schemas, tables, volumes and other objects, shared by workspaces in a region.\n- **Lakeflow Jobs.** Orchestration: jobs made of tasks with dependencies, schedules and event triggers.\n- **Lakeflow pipelines.** Declarative pipelines for streaming tables and materialized views; this is the product formerly called Delta Live Tables.",
+        "how-it-works": "Data stays in your object storage (ADLS Gen2, S3 or Google Cloud Storage), mostly as Delta tables. Compute attaches to it through Unity Catalog storage credentials and external locations.\n\nFor SQL and BI there are three SQL warehouse types:\n\n- **Serverless** runs in the Databricks account, starts in seconds and is what Databricks recommends for most workloads.\n- **Pro** runs in your account, takes minutes to start, and is suggested when serverless is not available or custom networking is needed.\n- **Classic** runs in your account with an entry-level feature set.\n\nFeature support per type differs slightly by cloud; check the warehouse types page for yours.",
+        "implementation": "- Provision workspaces and cloud infrastructure with the Databricks Terraform provider. It uses account-level APIs for metastores and their assignment and workspace-level APIs for most other Unity Catalog objects, so configurations typically declare two provider blocks.\n- Package jobs, pipelines and their code as bundles. A bundle has one `databricks.yml` at its root, declares resources and per-environment targets, and is validated and deployed with the Databricks CLI (`databricks bundle validate`, `deploy`, `run`). The documentation now names these Declarative Automation Bundles (formerly Databricks Asset Bundles) and recommends them for CI/CD.\n- Pin the provider version: resource names and arguments have changed between releases.",
+        "best-practices": "- Use a serverless SQL warehouse for BI unless networking or regional availability rules it out.\n- Do not store data in the workspace storage account (DBFS root); use Unity Catalog managed or external storage.\n- Keep infrastructure (Terraform) and workload definitions (bundles) in version control and deploy through CI/CD.\n- Run `databricks bundle validate` early in the pipeline to catch configuration errors before deployment.\n- Manage access through groups synced from the identity provider rather than individual users.",
+        "limitations": "- Running it well needs platform engineering: networking, compute policies, identity and cost controls.\n- Serverless and classic compute have different network paths and feature sets; a design must state which are allowed.\n- Feature availability differs by cloud and region, and product names change (Delta Live Tables, Workflows and Asset Bundles have all been renamed). Check current documentation before fixing names in designs.",
+        "cost-drivers": "- Compute usage is the main driver: jobs, pipelines, SQL warehouses and interactive clusters are billed for the time and size they run.\n- Idle time on clusters and warehouses that do not auto-stop.\n- Warehouse type and size; pro and classic warehouses also incur cloud virtual machine cost in your account.\n- Full recomputation of materialized views on classic compute (incremental refresh requires serverless).\n- Cloud storage and network charges are billed by the cloud provider separately."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Compute time and size for jobs, pipelines, SQL warehouses and interactive clusters",
+          "Idle compute without auto-stop",
+          "SQL warehouse type and size",
+          "Cloud storage and network charges billed separately by the cloud provider"
+        ],
+        "tradeoffs": [
+          "Open formats and many engines in one platform, at the price of more platform engineering than a pure SaaS warehouse.",
+          "Serverless compute removes cluster management but runs outside your own network."
+        ],
+        "limitations": [
+          "Needs platform engineering to manage networking, compute policies and cost.",
+          "Feature availability differs by cloud and region.",
+          "Product names change; verify current names in documentation."
+        ],
+        "compare": {
+          "Delivery model": "Managed platform: Databricks-run control plane; compute either in your cloud account (classic) or in the Databricks account (serverless)",
+          "Primary skills": "Spark, Python, SQL",
+          "Storage format": "Delta Lake in your object storage",
+          "Billing model": "Consumption (compute usage), plus cloud infrastructure for classic compute",
+          "Clouds": "Azure, AWS, Google Cloud"
+        }
+      },
+      "sources": [
+        { "title": "High-level architecture - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/getting-started/high-level-architecture", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Control plane, classic and serverless compute planes, workspace storage account guidance." },
+        { "title": "SQL warehouse types - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/compute/sql-warehouse/warehouse-types", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Serverless, pro and classic warehouse differences and recommendation." },
+        { "title": "What happened to Delta Live Tables (DLT)?", "url": "https://docs.databricks.com/aws/en/ldp/concepts/where-is-dlt", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Rename of Delta Live Tables to Lakeflow pipelines; no migration required." },
+        { "title": "What are Declarative Automation Bundles?", "url": "https://docs.databricks.com/aws/en/dev-tools/bundles/", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Bundles as YAML-defined projects deployed with the CLI; current name." },
+        { "title": "Databricks Terraform provider - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/dev-tools/terraform/", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Terraform provider manages workspaces and supporting cloud infrastructure." }
+      ],
+      "corrections": [
+        "Compare 'Delivery model' said 'Platform as a service in your cloud account'. Only classic compute runs in your account; the control plane and serverless compute run in the Databricks account.",
+        "Old concepts said 'clusters and SQL warehouses provide compute' without the classic/serverless split, which decides networking and cost.",
+        "Product names updated: Delta Live Tables is now Lakeflow pipelines, Workflows is Lakeflow Jobs, Databricks Asset Bundles are Declarative Automation Bundles."
+      ],
+      "unconfirmed": [
+        "MLflow for machine learning (in the old summary) was not researched in this pass and is left out of the new summary.",
+        "The statement that Lakeflow Jobs was formerly 'Databricks Workflows' is only indirectly supported by search results (the system table schema was renamed from workflow to lakeflow)."
+      ]
+    },
+    {
+      "slug": "delta-lake",
+      "summary": "An open table format that stores data as Parquet files plus a transaction log. The log gives ACID transactions, concurrent readers and writers, schema enforcement and time travel on object storage. Which engines can read or write a table depends on the protocol version and table features the table has enabled.",
+      "sections": {
+        "concepts": "- **Transaction log.** Every change to a table is recorded as an ordered commit. Readers build a consistent snapshot from the log, so they never see a half-written change.\n- **Optimistic concurrency control.** Writers work without locks and check for conflicts at commit time.\n- **Schema enforcement.** A write whose schema does not match the table is rejected by default.\n- **Schema evolution.** An explicit, per-write opt-in (`mergeSchema`, or `WITH SCHEMA EVOLUTION` in recent releases) that adds new columns. It does not drop columns or change existing types.\n- **Time travel.** Query an earlier version of the table by version number or timestamp.\n- **Protocol and table features.** Each table declares what a client must support to read it and to write it.",
+        "how-it-works": "A Delta table is a directory of Parquet data files and a log directory. A write adds new data files and then commits a log entry that lists files added and removed. The log also stores per-file statistics that engines use to skip files.\n\nCompatibility is managed in two ways:\n\n- **Protocol versions.** `minReaderVersion` and `minWriterVersion` are integers; each version bundles features.\n- **Table features.** Newer tables list individual features instead. Writer features do not block older readers; reader features do, and they are always writer features as well.\n\nA client that does not support a table's reader requirements cannot read it, and a client cannot write a table it cannot read.",
+        "best-practices": "- Before enabling a feature such as deletion vectors or column mapping, check that every engine that reads the table supports it. Enabling a reader feature can lock out older clients.\n- Enable schema evolution per operation, not session-wide; the Delta documentation advises against the session-wide setting because it makes unintended schema changes hard to trace.\n- Set log and deleted-file retention to match the time travel window you actually need, then run VACUUM on a schedule.\n- Do not set protocol versions by hand; let the engine choose the lowest protocol that covers the enabled features.",
+        "limitations": "- Engines differ in which Delta features they can read and write, so a table written by one engine may not be readable by another.\n- Time travel is not unlimited. A version can be read only while both its log entries and its data files are retained. VACUUM deletes data files that are no longer referenced and older than the retention period, and log cleanup removes old entries. Documented defaults are a log retention of 30 days and a deleted-file retention of 7 days; check the table properties.\n- Upgrading a protocol is easy; removing a feature needs an explicit drop-feature operation, and lowering version numbers by hand does not downgrade a table.\n- ACID guarantees rely on the storage system's atomicity and durability; some storage systems need a specific log store implementation.",
+        "cost-drivers": "- Retained history: longer deleted-file retention keeps more old data files in storage.\n- Many small files increase storage transactions and slow reads until they are compacted.\n- Compaction and VACUUM themselves use compute.\n\nDelta Lake itself has no licence cost; all cost comes from the storage account and the engine running against the table.",
+        "validation": "- Read the table from every engine that must consume it after any feature change.\n- Write a batch with an unexpected column and confirm it is rejected unless schema evolution was requested.\n- Query a version from the oldest point you promise to support and confirm it still works after VACUUM has run."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Storage for retained history (old data files kept for time travel)",
+          "Compute for compaction and VACUUM",
+          "Storage transactions caused by many small files"
+        ],
+        "tradeoffs": [
+          "Newer table features improve performance or flexibility but narrow the set of engines that can read or write the table.",
+          "Longer retention gives a longer time travel window at higher storage cost."
+        ],
+        "limitations": [
+          "Engines differ in which Delta features they can read and write.",
+          "Time travel only reaches versions whose log entries and data files are still retained.",
+          "Protocol upgrades are hard to reverse."
+        ],
+        "compare": {
+          "Delivery model": "Open-source table format and libraries; not a service",
+          "Primary skills": "Spark, SQL, Python",
+          "Storage format": "Parquet data files plus a transaction log in object storage",
+          "Billing model": "No licence cost; you pay for the storage and compute of the engine that uses it",
+          "Clouds": "Any object storage (Azure, AWS, Google Cloud, on-premises)"
+        }
+      },
+      "sources": [
+        { "title": "How does Delta Lake manage feature compatibility?", "url": "https://docs.delta.io/versioning/", "publisher": "Delta Lake project", "sourceType": "vendor-official", "supports": "Protocol versions, table features, reader and writer compatibility." },
+        { "title": "Delta Lake feature compatibility and protocols", "url": "https://docs.databricks.com/aws/en/tables/features/feature-compatibility", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Reader versus writer features, lowest-protocol resolution, advice against manual protocol edits." },
+        { "title": "Table batch reads and writes", "url": "https://docs.delta.io/delta-batch/", "publisher": "Delta Lake project", "sourceType": "vendor-official", "supports": "Time travel, retention properties, schema enforcement and evolution options." },
+        { "title": "Delta Lake Schema Enforcement", "url": "https://delta.io/blog/2022-11-16-delta-lake-schema-enforcement/", "publisher": "Delta Lake project", "sourceType": "vendor-official", "supports": "Writes with a mismatched schema are rejected by default." },
+        { "title": "Introducing Delta Lake Table Features", "url": "https://delta.io/blog/2023-07-27-delta-lake-table-features/", "publisher": "Delta Lake project", "sourceType": "vendor-official", "supports": "Table features replace integer protocol versions with per-feature flags." }
+      ],
+      "corrections": [
+        "Old summary implied time travel is always available. It is limited by log and data file retention and by VACUUM.",
+        "Old limitation 'engines differ in which Delta features they can read and write' was correct but unexplained; it is now tied to protocol versions and reader/writer table features.",
+        "The existing compare block was missing for this technology; added with the same five keys."
+      ],
+      "unconfirmed": [
+        "Serializable isolation level as the default write isolation: search results mention it for Spark but the exact defaults per engine were not confirmed, so no isolation level is named."
+      ]
+    },
+    {
+      "slug": "unity-catalog",
+      "summary": "Databricks' governance layer for data and AI assets. A metastore per region holds catalogs, schemas and objects such as tables, views, volumes and functions; privileges, row filters, column masks, lineage and audit data are managed in one place and apply across the workspaces attached to that metastore.",
+      "sections": {
+        "concepts": "- **Metastore.** The top-level container, scoped to one cloud region. Several workspaces in the region can be attached to it.\n- **Three-level namespace.** `catalog.schema.object`. Schemas contain tables, views, volumes and functions.\n- **Volumes.** Governed access to files (non-tabular data); managed or external. They give file access, not SQL queries.\n- **Storage credential.** Holds the cloud identity used to reach storage (on Azure, an access connector's managed identity).\n- **External location.** A storage path paired with a storage credential. Several external locations can share one credential.\n- **Managed storage.** The location for managed tables and volumes, set at metastore, catalog or schema level.\n- **Connections and service credentials.** Used for federated sources and for access to external cloud services.",
+        "how-it-works": "Privileges are granted to users, groups and service principals on securable objects. Grants on a catalog or schema are inherited by the objects inside it; privileges granted on the metastore are not inherited by child objects.\n\nFine-grained control is added in two ways:\n\n- **Row filters and column masks** attached to a table as functions.\n- **Attribute-based access control (ABAC) policies** that apply filters and masks by tags across many tables.\n\nLineage is captured automatically for queries, down to column level, and is exposed in the catalog UI and in lineage system tables. Audit events and billable usage are also available as system tables.",
+        "implementation": "1. Decide the catalog layout (for example by environment and domain) and where managed storage lives.\n2. On Azure, create an access connector for Azure Databricks, grant its managed identity a data role on the storage account, and register it as a storage credential.\n3. Create external locations for each container path.\n4. Create catalogs and schemas, with managed locations where needed.\n5. Grant privileges to groups, not individual users.\n6. Add row filters, column masks or ABAC policies for sensitive data.\n7. Enable the system table schemas you need (audit, lineage, billing).\n\nAll of this can be declared with the Databricks Terraform provider.",
+        "best-practices": "- Grant to groups synced from the identity provider.\n- Grant at catalog or schema level and rely on inheritance, rather than table by table.\n- Keep one storage credential per trust boundary and scope external locations to the narrowest useful path.\n- Prefer SQL functions over Python functions for filters and masks; the documentation notes Python UDFs are slower.\n- Test every policy with a restricted identity, and enable ANSI mode so type mismatches in filter logic fail instead of silently returning NULL.",
+        "limitations": "- A metastore is regional; sharing across regions uses other mechanisms such as Delta Sharing.\n- Row filters and column masks cannot be applied to views.\n- Protected tables restrict some operations: the documentation lists clones, time travel, path-based file access and some sharing and search-index scenarios. Requirements also depend on compute access mode and runtime version. Check the limitations page for your cloud.\n- Filters and masks can reduce predicate pushdown and partition pruning, so protected tables may query more slowly.\n- Unity Catalog audit events are logged at account level and are read from the audit system table rather than through Azure diagnostic settings.",
+        "validation": "- Query each protected table as a user from every role and compare the rows and masked columns returned with the policy.\n- Confirm a user without a grant on the external location cannot read the path directly.\n- Run a pipeline and check that table and column lineage appears.\n- Query the audit system table for a known action, such as a grant, to prove audit data is flowing."
+      },
+      "attributes": {
+        "costDrivers": [
+          "No separate compute of its own; cost comes from the compute that queries governed data",
+          "Slower queries on tables with row filters or column masks can raise compute use",
+          "Storage of managed tables and volumes in your cloud account"
+        ],
+        "tradeoffs": [
+          "Central governance across workspaces, but only for workloads that run through Unity Catalog-enabled compute.",
+          "Row filters and column masks give fine-grained control at the price of restricted operations and possible query slowdown."
+        ],
+        "limitations": [
+          "A metastore is scoped to one region.",
+          "Row filters and column masks cannot be applied to views and restrict clones, time travel and some sharing scenarios.",
+          "Privileges granted on the metastore are not inherited by child objects."
+        ],
+        "compare": {
+          "Delivery model": "Built-in governance service of the Databricks platform (an open-source Unity Catalog project also exists)",
+          "Primary skills": "SQL, Terraform",
+          "Storage format": "Governs Delta tables and other formats, plus files in volumes; data stays in your object storage",
+          "Billing model": "No separate charge identified; cost follows the compute and storage it governs (check current documentation)",
+          "Clouds": "Azure, AWS, Google Cloud"
+        }
+      },
+      "sources": [
+        { "title": "What is Unity Catalog? - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/data-governance/unity-catalog/", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Object model: metastore, catalogs, schemas, tables, views, volumes, functions." },
+        { "title": "Unity Catalog privileges reference", "url": "https://docs.databricks.com/aws/en/data-governance/unity-catalog/access-control/privileges-reference", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Privilege inheritance; metastore privileges not inherited; storage credential and external location privileges." },
+        { "title": "Row filters and column masks - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/data-governance/unity-catalog/filters-and-masks/", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Row filters, column masks and their limitations." },
+        { "title": "Lineage in Unity Catalog - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/data-governance/unity-catalog/data-lineage", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Automatic table and column lineage and lineage system tables." },
+        { "title": "Diagnostic log reference - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/admin/account-settings/audit-logs", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Unity Catalog events are account-level and read from the audit log system table." }
+      ],
+      "corrections": [
+        "Old text said 'a metastore contains catalogs, which contain schemas and tables'. Schemas also hold views, volumes and functions, and the metastore is scoped to one region.",
+        "Old text said permissions 'apply across workspaces'. They apply across the workspaces attached to the same regional metastore.",
+        "Old text omitted storage credentials and external locations, which are how Unity Catalog reaches cloud storage.",
+        "The existing compare block was missing for this technology; added with the same five keys."
+      ],
+      "unconfirmed": [
+        "Whether Unity Catalog carries any separate charge was not confirmed from search results; the compare cell says to check current documentation.",
+        "The open-source Unity Catalog project is mentioned in the compare cell from general knowledge and a delta.io blog title about a UC Delta API; no dedicated source page was retrieved."
+      ]
+    },
+    {
+      "slug": "streaming-analytics-kafka-spark",
+      "summary": "An event-driven pipeline: producers publish to Kafka (or a Kafka-compatible managed service), Spark Structured Streaming reads the topics, applies watermarks and windowed aggregations, and writes to Delta tables with checkpoints for recovery. Dashboards and applications read the resulting low-latency tables.",
+      "sections": {
+        "context": "The business needs to act within seconds or minutes of an event: operational dashboards, alerting, fraud signals or device monitoring.\n\nUse this design when:\n\n- Events already flow through Kafka, or several consumers need the same event stream.\n- Results must be kept as queryable history as well as served live.\n- The team can operate always-on jobs.\n\nIf hourly or daily freshness is enough, incremental batch on the same tables is cheaper and simpler to run.",
+        "concepts": "- **Topic, partition, offset.** Kafka stores each topic as partitions; each record has an offset. Order is guaranteed only within a partition.\n- **Checkpoint.** Structured Streaming records the offset range of each trigger, and operator state, in a checkpoint location so a restarted query continues where it stopped.\n- **Watermark.** A threshold on event time that tells the engine how long to wait for late records and when it can drop window state.\n- **Output mode.** Append emits a window once the watermark passes its end; update emits changed rows each trigger; complete rewrites everything and never drops state.\n- **Exactly-once.** An end-to-end property that needs a replayable source, a checkpoint and an idempotent or transactional sink.",
+        "how-it-works": "1. Producers append events to Kafka topics, keyed so related events land in the same partition.\n2. A Structured Streaming query subscribes to the topics. `startingOffsets` applies only the first time a query starts; after that the query resumes from its checkpoint.\n3. The query parses events, calls `withWatermark` on the event-time column before grouping, and aggregates over windows.\n4. Results are written to Delta tables. The Delta transaction log makes these writes exactly-once, even with other streams or batch jobs writing to the same table.\n5. Serving reads the Delta tables through a SQL warehouse or another store.\n\nOn Databricks the same logic can be written as streaming tables in Lakeflow pipelines, which manage checkpoints for you.",
+        "implementation": "1. Agree event schemas and how they are versioned.\n2. Create topics with a partition count and key chosen for the ordering and throughput you need, and set retention longer than the longest outage you must recover from.\n3. Land raw events in a bronze Delta table with one checkpoint location per query.\n4. Add silver parsing and deduplication, then stateful aggregations with watermarks.\n5. Authenticate the stream to Kafka: SASL or TLS options, or on Databricks a Unity Catalog service credential where the runtime supports it.\n6. Serve aggregates to dashboards or APIs.\n7. Alert on consumer lag, batch duration, state size and failures.\n8. Rehearse a restart, a schema change and a replay from retained offsets.",
+        "best-practices": "- Give every streaming query its own checkpoint location and never share or casually delete it. A new or deleted checkpoint makes the query start fresh.\n- Treat these changes as a new deployment needing a new checkpoint and a replay plan: different input sources or subscribed topics, changes to stateful operations or grouping keys, or a different sink type. Changes to filters, rate limits and trigger intervals are generally safe.\n- Use append mode with a watermark for windowed aggregates so state stays bounded.\n- Size the watermark from measured lateness, not a guess.\n- Where the sink is not Delta (for example `foreachBatch` to another system, or a Kafka sink), make writes idempotent or deduplicate downstream.",
+        "limitations": "- Exactly-once holds only for supported combinations. The Kafka sink does not provide exactly-once writes, and continuous processing mode gives at-least-once guarantees.\n- A watermark guarantees that data less late than the threshold is kept; data later than that may be dropped. The watermark advances only when new data arrives, so output can stall on a quiet stream.\n- Stateful queries cannot have their stateful operations changed between restarts.\n- Kafka keeps order per partition only. Partitions can be added but not removed, and adding them changes which partition a key maps to.\n- If the query is down longer than topic retention, events are lost; `failOnDataLoss` controls whether the query fails in that case.",
+        "security": "- A new Kafka cluster accepts unauthenticated plaintext connections and applies no authorization, so all three controls must be configured explicitly: TLS on listeners, SASL or mutual TLS authentication, and an authorizer with ACLs.\n- With an authorizer enabled, access without a matching ACL is denied; super users bypass ACL checks, so keep that list short.\n- Kafka has no built-in encryption at rest; use disk or filesystem encryption, or encrypt payloads in producers.\n- Keep brokers and stream processing on private network paths.\n- Store Kafka credentials in a secret store, or use a Unity Catalog service credential on Databricks instead of embedding SASL settings.\n- Govern the output tables with catalog permissions.",
+        "validation": "- Replay a recorded event sample and compare aggregates with expected results, including events that arrive late and out of order.\n- Stop the job mid-batch and restart it; confirm the Delta tables contain no duplicates and no gaps.\n- Stop the job for longer than normal and confirm it catches up within the agreed time.\n- Send events later than the watermark and confirm they are handled the way the business expects.\n- Measure end-to-end latency and consumer lag at peak load.\n- Deploy a compatible and an incompatible schema change in a test environment."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Always-on streaming compute",
+          "Kafka broker capacity, partition count and retention",
+          "Checkpoint and state storage, which grows with watermark delay and key cardinality",
+          "Small-file compaction on frequently written Delta tables",
+          "Cross-zone and cross-network traffic between brokers and processing"
+        ],
+        "tradeoffs": [
+          "Low latency in exchange for always-on compute and harder operations.",
+          "Exactly-once behaviour depends on the sink: Delta gives it, a Kafka sink or custom sink does not without extra work.",
+          "A longer watermark tolerates later data but holds more state and delays append-mode results."
+        ],
+        "limitations": [
+          "Schema evolution and late-arriving events need explicit handling.",
+          "Changes to stateful operations, sources or sink type require a new checkpoint and a replay plan.",
+          "Kafka orders records per partition only; partition count can be increased but not reduced.",
+          "On-call operations are needed for streaming jobs."
+        ],
+        "steps": [
+          "Define event schemas and how they are versioned.",
+          "Provision Kafka topics with partition count, keys and retention.",
+          "Build streaming ingestion into bronze Delta tables, one checkpoint per query.",
+          "Add parsing, deduplication and stateful aggregations with watermarks.",
+          "Secure Kafka clients (TLS, authentication, ACLs) and output tables.",
+          "Serve aggregates to dashboards or APIs.",
+          "Add lag, throughput, state-size and failure alerting.",
+          "Test restart, replay, late data and schema change before go-live."
+        ]
+      },
+      "tokenNotes": "costModel is 'provisioned' while the only platform token is 'databricks', which the databricks item describes as consumption billing. Either is defensible (the cluster runs continuously), but 'consumption' would be consistent with the other Databricks scenario. The 'security' attribute includes 'ha' and 'dr', which vocab.ts defines under availability. sourceSystems 'postgresql', 'mysql', 'mongodb' are only valid here via change data capture into Kafka, which the text does not describe; consider removing them or adding a CDC note.",
+      "sources": [
+        { "title": "Structured Streaming + Kafka Integration Guide (Kafka broker version 0.10.0 or higher) - Spark 4.2.0 Documentation", "url": "https://spark.apache.org/docs/latest/streaming/structured-streaming-kafka-integration.html", "publisher": "Apache Software Foundation", "sourceType": "vendor-official", "supports": "Kafka source options: startingOffsets behaviour on restart, failOnDataLoss." },
+        { "title": "Structured Streaming Programming Guide - Spark 3.5.7 Documentation", "url": "https://spark.apache.org/docs/3.5.7/structured-streaming-programming-guide.html", "publisher": "Apache Software Foundation", "sourceType": "vendor-official", "supports": "Checkpoints and write-ahead logs, replayable sources and idempotent sinks for exactly-once, watermark semantics, continuous mode at-least-once." },
+        { "title": "Structured Streaming checkpoints", "url": "https://docs.databricks.com/aws/en/structured-streaming/checkpoints", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Which query changes need a new checkpoint and which are safe." },
+        { "title": "Delta Lake table streaming reads and writes", "url": "https://docs.databricks.com/aws/en/structured-streaming/delta-lake", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Delta transaction log guarantees exactly-once processing for streaming writes." },
+        { "title": "Apply watermarks to control data processing thresholds", "url": "https://docs.databricks.com/aws/en/structured-streaming/watermarks", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Watermark behaviour, output modes and state cleanup." }
+      ],
+      "corrections": [
+        "Old trade-off said exactly-once 'depends on sink and checkpoint design' without saying which sinks. Delta sinks give exactly-once; the Kafka sink and custom sinks do not, and continuous mode is at-least-once.",
+        "Old validation said to confirm 'recovery without duplicates' for any restart. That only holds when the sink is idempotent or transactional (Delta); the text now says so.",
+        "Old security text said 'encryption at rest for topics'. Kafka has no built-in encryption at rest; it must come from disk/filesystem encryption or payload encryption.",
+        "Old steps treated a schema registry as part of Kafka. A schema registry is a separate component not covered by the Apache Kafka documentation; the step now says to define and version schemas."
+      ],
+      "unconfirmed": [
+        "Schema registry behaviour (compatibility checks) shown in the diagram: no official Apache Kafka page covers it; not researched from a vendor source.",
+        "Key-value store as a low-latency serving option shown in the diagram was not researched.",
+        "Backpressure alerting named in the diagram was not confirmed against documentation."
+      ]
+    },
+    {
+      "slug": "apache-kafka",
+      "summary": "A distributed event streaming platform. Producers append records to topics that are split into replicated partitions; consumers in a consumer group share the partitions and track their position with offsets. Records are kept according to a retention or compaction policy, so several consumers can read the same data at their own pace.",
+      "sections": {
+        "concepts": "- **Topic and partition.** A topic is divided into partitions; each partition is an ordered, append-only log.\n- **Offset.** A sequential number identifying a record within its partition. A consumer's position is the offset of the next record to read.\n- **Consumer group.** Each partition is consumed by exactly one consumer in the group, so adding consumers spreads the load up to the partition count. Committed offsets are stored in the internal compacted topic `__consumer_offsets`.\n- **Replication.** Each partition is copied to a configurable number of brokers for fault tolerance.\n- **Retention.** The default `delete` cleanup policy discards old log segments once a time or size limit is reached. The `compact` policy keeps at least the latest value for each key. The two can be combined.\n- **KRaft.** Kafka's built-in controller quorum for cluster metadata.",
+        "how-it-works": "A producer chooses a partition for each record, by default from a hash of the record key, so records with the same key stay in order in one partition. Order is guaranteed within a partition only, not across a topic.\n\nDelivery semantics:\n\n- **At-least-once** is the default: producers retry and consumers commit offsets after processing, so a failure can cause duplicates.\n- **At-most-once** is possible by disabling producer retries and committing offsets before processing.\n- **Exactly-once** uses the idempotent producer (no duplicates from retries within a session) and transactions (atomic writes across partitions and topics), with consumers reading at the read-committed isolation level. Kafka Streams is the simplest way to get this for read-process-write on Kafka.",
+        "best-practices": "- Choose the record key deliberately: it decides ordering and how evenly load spreads.\n- Choose the partition count with growth in mind; it can be raised but not lowered.\n- Set retention from the recovery need (how far back a consumer must be able to replay), not from a default.\n- Use log compaction for topics that hold the current state per key.\n- Enable TLS, authentication and an authorizer before the cluster is reachable from any untrusted network.\n- Never raise the partition count of internal topics such as `__consumer_offsets`.",
+        "limitations": "- Ordering is per partition only.\n- Kafka does not support reducing a topic's partition count. Increasing it changes the key-to-partition mapping, so records for a key can land in a different partition from earlier ones, and existing data is not moved.\n- Exactly-once covers reading, processing and writing within Kafka. Writing to an external system still needs an idempotent or transactional sink.\n- Kafka 4.0 and later run only in KRaft mode. ZooKeeper-based clusters must be migrated to KRaft on an earlier bridge release before upgrading.\n- Running your own cluster means owning broker sizing, upgrades and monitoring; managed and Kafka-compatible services differ in which features and settings they expose.",
+        "security": "A newly installed cluster accepts unauthenticated plaintext connections and applies no authorization. Production clusters need three things configured explicitly:\n\n- **Encryption in transit.** TLS per listener.\n- **Authentication.** SASL mechanisms (Kerberos, SCRAM, OAUTHBEARER, PLAIN) or mutual TLS. PLAIN should only be used over TLS.\n- **Authorization.** A pluggable authorizer with ACLs on topics, groups and other resources. Without an authorizer every authenticated principal has full access; with one, access without a matching ACL is denied.\n\nKafka does not encrypt data at rest itself; use disk or filesystem encryption, or encrypt messages in the producer. Client tools such as Kafka Connect and Kafka Streams need the same client security settings.",
+        "cost-drivers": "- Broker count and size, driven by throughput and partition count.\n- Retention period and replication factor, which multiply stored data.\n- Network traffic between zones for replication and for consumers in other zones or networks.\n- Operations effort for a self-managed cluster, or the service charge for a managed one."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Broker count and size",
+          "Retention period multiplied by replication factor",
+          "Cross-zone replication and consumer traffic",
+          "Operations effort (self-managed) or service charges (managed)"
+        ],
+        "tradeoffs": [
+          "More partitions raise parallelism but add broker overhead and cannot be removed later.",
+          "Longer retention makes replay and recovery easier at higher storage cost.",
+          "Exactly-once transactions remove duplicates inside Kafka at the price of more complex client configuration."
+        ],
+        "limitations": [
+          "Ordering is guaranteed only within a partition.",
+          "Partition count can be increased but not reduced, and increasing it changes key-to-partition mapping.",
+          "No built-in encryption at rest.",
+          "Kafka 4.0 and later require KRaft; ZooKeeper mode is removed."
+        ],
+        "compare": {
+          "Delivery model": "Open-source software you run yourself, or a managed / Kafka-compatible cloud service",
+          "Primary skills": "Kafka, Java or Python client development, operations",
+          "Storage format": "Partitioned, replicated append-only logs on broker disks",
+          "Billing model": "No licence cost self-managed (infrastructure and operations); managed services bill by capacity or usage",
+          "Clouds": "Any (Azure, AWS, Google Cloud, on-premises)"
+        }
+      },
+      "sources": [
+        { "title": "Design", "url": "https://kafka.apache.org/43/design/design/", "publisher": "Apache Software Foundation", "sourceType": "vendor-official", "supports": "Partitions, offsets, consumer position, delivery semantics, idempotent and transactional producer, log compaction." },
+        { "title": "Topic Configs", "url": "https://kafka.apache.org/44/configuration/topic-configs/", "publisher": "Apache Software Foundation", "sourceType": "vendor-official", "supports": "cleanup.policy delete and compact, retention settings." },
+        { "title": "Basic Kafka Operations", "url": "https://kafka.apache.org/43/operations/basic-kafka-operations/", "publisher": "Apache Software Foundation", "sourceType": "vendor-official", "supports": "Adding partitions, effect on key mapping, no partition reduction, internal topics warning." },
+        { "title": "KRaft vs ZooKeeper", "url": "https://kafka.apache.org/40/getting-started/zk2kraft/", "publisher": "Apache Software Foundation", "sourceType": "vendor-official", "supports": "Kafka 4.0 runs only in KRaft mode; ZooKeeper clusters must migrate first." },
+        { "title": "Security Model", "url": "https://kafka.apache.org/44/security/security-model/", "publisher": "Apache Software Foundation", "sourceType": "vendor-official", "supports": "Defaults are unauthenticated plaintext with no authorization; TLS, SASL, ACLs; no built-in encryption at rest." }
+      ],
+      "corrections": [
+        "Old limitation said partition count is 'hard to change later'. Precisely: it can be increased but never reduced, and increasing it changes which partition a key maps to without moving existing data.",
+        "Old concepts gave no delivery semantics. Default is at-least-once; exactly-once needs the idempotent producer, transactions and read-committed consumers.",
+        "Old text did not mention the metadata layer. Kafka 4.0 and later run only in KRaft mode; ZooKeeper is removed.",
+        "The existing compare block was missing for this technology; added with the same five keys."
+      ],
+      "unconfirmed": [
+        "Specific managed Kafka-compatible services (Azure Event Hubs, Amazon MSK, Confluent Cloud) and their feature differences were not researched in this pass."
+      ]
+    }
+  ],
+  "newItems": [
+    {
+      "slug": "spark-structured-streaming",
+      "type": "technology",
+      "title": "Spark Structured Streaming",
+      "summary": "Apache Spark's stream processing engine. A streaming query is written with the same DataFrame and SQL operations as batch, runs as a series of micro-batches by default, and uses checkpoints and watermarks to recover from failure and to bound state.",
+      "tags": ["spark", "streaming", "databricks"],
+      "sections": {
+        "concepts": "- **Streaming query.** A DataFrame query over an unbounded source that runs continuously or on a trigger.\n- **Checkpoint.** The engine records the offset range processed in each trigger, plus operator state, using checkpointing and write-ahead logs.\n- **Watermark.** Set with `withWatermark` on an event-time column before the aggregation. Data less late than the threshold is always included; later data may be dropped, and old window state is cleaned up.\n- **Output modes.** Append (final results once the watermark passes), update (changed rows each trigger) and complete (full result each trigger, state never dropped).\n- **Sources and sinks.** Kafka, files (Auto Loader on Databricks) and Delta tables are the common ones.",
+        "how-it-works": "End-to-end exactly-once results come from three parts working together: a replayable source such as Kafka, a checkpoint that records progress, and an idempotent sink. If any part is missing the guarantee is at-least-once.\n\n- Writes to Delta tables are exactly-once because of the Delta transaction log.\n- The Kafka sink does not provide exactly-once writes.\n- Continuous processing mode gives at-least-once guarantees.\n\nFor a Kafka source, `startingOffsets` is used only when a query first starts; a restarted query always resumes from its checkpoint.",
+        "best-practices": "- One checkpoint location per query; do not delete it to clear a transient failure.\n- Plan a new checkpoint and a replay when changing sources, subscribed topics, stateful operations or the sink type.\n- Use append mode with a watermark for windowed aggregations to keep state bounded.\n- For sinks that are not transactional, write idempotently or deduplicate downstream.",
+        "limitations": "- Stateful operations cannot be changed between restarts of the same query.\n- The watermark advances only when new data arrives, so results and state cleanup can lag on a quiet stream.\n- Exactly-once depends on the sink; it is not a property of the engine alone."
+      },
+      "attributes": {
+        "costDrivers": ["Always-on or frequently triggered compute", "State store and checkpoint storage", "Trigger interval (shorter intervals mean more batches and more small files)"],
+        "tradeoffs": ["One API for batch and streaming, with micro-batch latency rather than per-event latency by default."],
+        "limitations": ["Exactly-once depends on source and sink.", "Stateful queries are hard to change in place."],
+        "compare": {
+          "Delivery model": "Open-source engine, part of Apache Spark; also available in managed Spark services",
+          "Primary skills": "Spark, Python, SQL",
+          "Storage format": "Reads and writes Kafka, files and table formats such as Delta Lake; state in a checkpoint location",
+          "Billing model": "No licence cost; you pay for the compute that runs it",
+          "Clouds": "Any (Azure, AWS, Google Cloud, on-premises)"
+        }
+      },
+      "relationships": [
+        ["part_of", "databricks"],
+        ["integrates_with", "apache-kafka"],
+        ["integrates_with", "delta-lake"]
+      ],
+      "sources": [
+        { "title": "Structured Streaming Programming Guide - Spark 3.5.7 Documentation", "url": "https://spark.apache.org/docs/3.5.7/structured-streaming-programming-guide.html", "publisher": "Apache Software Foundation", "sourceType": "vendor-official", "supports": "Checkpointing and write-ahead logs, exactly-once conditions, watermark semantics, continuous mode guarantees." },
+        { "title": "Structured Streaming + Kafka Integration Guide (Kafka broker version 0.10.0 or higher) - Spark 4.2.0 Documentation", "url": "https://spark.apache.org/docs/latest/streaming/structured-streaming-kafka-integration.html", "publisher": "Apache Software Foundation", "sourceType": "vendor-official", "supports": "Kafka source options and restart behaviour." },
+        { "title": "Structured Streaming checkpoints", "url": "https://docs.databricks.com/aws/en/structured-streaming/checkpoints", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Query changes that require a new checkpoint." },
+        { "title": "Select an output mode for Structured Streaming - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/structured-streaming/output-mode", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Append, update and complete output modes." }
+      ]
+    },
+    {
+      "slug": "lakeflow-pipelines",
+      "type": "technology",
+      "title": "Lakeflow pipelines (formerly Delta Live Tables)",
+      "summary": "Databricks' declarative pipeline framework. You define streaming tables and materialized views in SQL or Python and the platform works out dependencies, runs them and manages checkpoints. The documentation now calls it Lakeflow pipelines (also Lakeflow Spark Declarative Pipelines); it was called Delta Live Tables (DLT).",
+      "tags": ["databricks", "pipelines", "etl", "streaming"],
+      "sections": {
+        "concepts": "- **Pipeline.** A set of dataset definitions that the platform runs in dependency order.\n- **Streaming table.** A Delta table fed incrementally. Each record is processed exactly once, assuming an append-only source. Suited to ingestion and continuously growing data.\n- **Materialized view.** A table whose results are recomputed as needed to reflect current data. Suited to transformations and aggregations.\n- **Naming.** Existing DLT code runs without migration. In Python the `dlt` module is replaced by `pyspark.pipelines`; in SQL, datasets are defined with `CREATE OR REFRESH STREAMING TABLE` and `CREATE OR REFRESH MATERIALIZED VIEW`. Open-source Apache Spark includes declarative pipelines from Spark 4.1.",
+        "how-it-works": "You declare what each table should contain as a query. The pipeline reads the definitions, builds the dependency graph, and updates tables in order.\n\nStreaming tables read sources such as Auto Loader or Kafka incrementally and keep their own checkpoints. Materialized views are refreshed when their inputs change. Incremental refresh of materialized views requires serverless compute; on classic compute they are fully recomputed on each update.\n\nPipelines can be triggered on a schedule as a task in a Lakeflow Jobs job, or run continuously.",
+        "limitations": "- Exactly-once holds for Delta-to-Delta flows. Where a pipeline writes through a custom or non-Delta sink, treat that step as at-least-once and add idempotent writes or deduplication.\n- Materialized views on classic compute are fully recomputed, which raises refresh cost.\n- Names in older material (DLT, `LIVE TABLE` syntax, the `dlt` Python module) are superseded; some billing SKUs still use the DLT name. Check current documentation.",
+        "cost-drivers": "- Pipeline compute for each update, and whether the pipeline runs continuously or triggered.\n- Full recomputation of materialized views on classic compute.\n- Serverless versus classic pipeline compute.\n\nA pipeline that runs continuously keeps compute on all the time; a triggered pipeline pays only for each update, at the price of higher latency."
+      },
+      "attributes": {
+        "costDrivers": ["Pipeline compute per update", "Continuous versus triggered execution", "Full recomputation of materialized views on classic compute"],
+        "tradeoffs": ["Less orchestration and checkpoint code to write, in exchange for running inside the Databricks pipeline runtime."],
+        "limitations": ["Incremental refresh of materialized views requires serverless compute.", "Exactly-once applies to Delta-to-Delta flows only."],
+        "compare": {
+          "Delivery model": "Managed feature of the Databricks platform",
+          "Primary skills": "SQL, Python, Spark",
+          "Storage format": "Delta Lake tables governed by Unity Catalog",
+          "Billing model": "Consumption (pipeline compute usage)",
+          "Clouds": "Azure, AWS, Google Cloud"
+        }
+      },
+      "relationships": [
+        ["part_of", "databricks"],
+        ["uses", "delta-lake"],
+        ["implements", "medallion-architecture"],
+        ["related_to", "spark-structured-streaming"]
+      ],
+      "sources": [
+        { "title": "What happened to Delta Live Tables (DLT)?", "url": "https://docs.databricks.com/aws/en/ldp/concepts/where-is-dlt", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Rename to Lakeflow pipelines, no migration required, changed Python module and SKU naming." },
+        { "title": "Pipeline concepts - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/ldp/concepts/", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Streaming tables and materialized views and what each is suited to." },
+        { "title": "Processing guarantees in Lakeflow pipelines", "url": "https://docs.databricks.com/aws/en/ldp/best-practices/processing-guarantees", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Exactly-once for Delta-to-Delta flows; at-least-once for other sinks." },
+        { "title": "Develop Lakeflow pipelines code with SQL - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/ldp/developer/sql-dev", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "CREATE OR REFRESH syntax for streaming tables and materialized views." }
+      ]
+    },
+    {
+      "slug": "auto-loader",
+      "type": "technology",
+      "title": "Auto Loader",
+      "summary": "A Databricks Structured Streaming source (`cloudFiles`) that incrementally ingests new files from cloud object storage as they arrive, tracks which files it has processed in a checkpoint, and can infer and evolve the schema.",
+      "tags": ["databricks", "ingestion", "files"],
+      "sections": {
+        "concepts": "- **cloudFiles source.** Auto Loader is used as a Structured Streaming source and can also process files already present in the directory.\n- **File discovery.** Directory listing is the default. File notification and file events modes receive notifications of new files instead of listing the directory; Databricks recommends the file events option for most workloads.\n- **Schema location.** Setting `cloudFiles.schemaLocation` turns on schema inference and evolution; the inferred schema is stored and tracked over time.\n- **Schema hints.** Known column types can be pinned with `cloudFiles.schemaHints`. For JSON and CSV, columns are inferred as strings unless type inference is switched on.",
+        "how-it-works": "Each ingestion stream has its own checkpoint, which records the files already processed so each file is loaded once.\n\nWhen a file contains a new column, the default evolution mode (`addNewColumns`) stops the stream with an error, merges the new column into the stored schema, and continues after a restart. Other modes rescue unexpected data into a separate column, fail, or ignore new columns.\n\nDirectory listing scans the source directory on every trigger, so discovery time grows with the number of files. Notification-based modes keep discovery time low regardless of directory size.",
+        "best-practices": "- Give each source path its own stream and checkpoint.\n- Run jobs with automatic restart so schema evolution does not need manual intervention.\n- Use schema hints for columns whose type matters.\n- Prefer notification-based discovery for large or long-lived directories.",
+        "limitations": "- It is a Databricks feature, not part of open-source Spark.\n- The default schema evolution behaviour stops the stream when a new column appears.\n- Partition columns are not part of schema evolution.\n- Available schema evolution modes and discovery options differ between clouds and releases; check current documentation."
+      },
+      "attributes": {
+        "costDrivers": ["Compute for the ingestion stream", "Storage listing operations in directory listing mode", "Cloud queue and event services in notification modes"],
+        "tradeoffs": ["Directory listing needs no extra cloud setup but slows as directories grow; notification modes scale better but need event infrastructure and permissions."],
+        "limitations": ["Databricks-only.", "Default schema evolution stops the stream on new columns."],
+        "compare": {
+          "Delivery model": "Managed feature of the Databricks platform",
+          "Primary skills": "Spark, Python, SQL",
+          "Storage format": "Reads files (for example JSON, CSV, Parquet) from object storage; typically writes Delta tables",
+          "Billing model": "Consumption (compute usage of the stream)",
+          "Clouds": "Azure, AWS, Google Cloud"
+        }
+      },
+      "relationships": [
+        ["part_of", "databricks"],
+        ["uses", "spark-structured-streaming"],
+        ["integrates_with", "delta-lake"]
+      ],
+      "sources": [
+        { "title": "What is Auto Loader?", "url": "https://docs.databricks.com/aws/en/ingestion/cloud-object-storage/auto-loader/", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Incremental file ingestion through the cloudFiles Structured Streaming source." },
+        { "title": "Configure schema inference and evolution in Auto Loader - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/ingestion/cloud-object-storage/auto-loader/schema", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Schema location, inference, hints and evolution modes." },
+        { "title": "Configure Auto Loader streams in file notification mode", "url": "https://docs.databricks.com/aws/en/ingestion/cloud-object-storage/auto-loader/file-notification-mode", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Directory listing versus notification and file events discovery." }
+      ]
+    }
+  ]
+}
