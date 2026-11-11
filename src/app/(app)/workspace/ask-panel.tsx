@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { api, ApiError, errorMessage } from "@/components/client";
-import { DemoTag, EmptyState, SourceCitation, TrustBadge } from "@/components/ui";
+import { Markdown } from "@/components/markdown";
+import { Badge, DemoTag, EmptyState, SourceCitation, TrustBadge } from "@/components/ui";
 import { knowledgeTypeLabel } from "@/lib/catalog";
 
 interface Passage {
@@ -12,11 +13,11 @@ interface Passage {
   why: string[];
   sources: { id: string; title: string; url: string | null; sourceType: string }[];
 }
-interface Exchange { question: string; passages: Passage[] }
+interface Exchange { question: string; passages: Passage[]; answer: { text: string; model: string } | null; answerError: string | null }
 
 const SUGGESTIONS = ["How does the medallion architecture work?", "What are the trade-offs of private endpoints?", "How should I reconcile a data migration?"];
 
-export function AskPanel({ generative, provider }: { generative: boolean; provider: string }) {
+export function AskPanel({ generative, provider, unavailable }: { generative: boolean; provider: string; unavailable: string | null }) {
   const [question, setQuestion] = useState("");
   const [history, setHistory] = useState<Exchange[]>([]);
   const [busy, setBusy] = useState(false);
@@ -26,8 +27,8 @@ export function AskPanel({ generative, provider }: { generative: boolean; provid
     setBusy(true);
     setError(null);
     try {
-      const result = await api<{ passages: Passage[] }>("/api/ask", { body: { question: text } });
-      setHistory((h) => [{ question: text, passages: result.passages }, ...h]);
+      const result = await api<{ passages: Passage[]; answer: Exchange["answer"]; answerError: string | null }>("/api/ask", { body: { question: text } });
+      setHistory((h) => [{ question: text, passages: result.passages, answer: result.answer, answerError: result.answerError }, ...h]);
       setQuestion("");
     } catch (e) {
       setError(e instanceof ApiError && e.fieldErrors.question ? e.fieldErrors.question.join(" ") : errorMessage(e));
@@ -37,7 +38,13 @@ export function AskPanel({ generative, provider }: { generative: boolean; provid
   };
   return (
     <div className="stack">
-      {!generative && (
+      {unavailable && <p className="form-error" role="alert">The configured language model is unavailable: {unavailable} Questions will fail until this is fixed.</p>}
+      {generative && (
+        <p className="note">
+          <strong>Answers are written by {provider}</strong> from passages retrieved from your Knowledge Library, and only from those. Your question and the passages are sent to the Anthropic API. Each answer is generated and not validated — check it against the cited passages below it.
+        </p>
+      )}
+      {!generative && !unavailable && (
         <p className="note">
           <strong>Retrieval only.</strong> No generative model is configured (provider: {provider}), so nothing here is written by an AI. You get the stored passages that best match your question, exactly as they are in the Knowledge Library.
         </p>
@@ -49,7 +56,7 @@ export function AskPanel({ generative, provider }: { generative: boolean; provid
             <textarea id="ask-q" className="textarea" style={{ minHeight: 70 }} value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void ask(question); }} placeholder="e.g. What should I validate after deploying a lakehouse?" />
           </div>
           <div className="actions">
-            <button className="btn primary" disabled={busy || question.trim().length < 3}>{busy ? "Searching…" : "Ask"}</button>
+            <button className="btn primary" disabled={busy || question.trim().length < 3}>{busy ? (generative ? "Searching and writing…" : "Searching…") : "Ask"}</button>
             {SUGGESTIONS.map((s) => <button key={s} type="button" className="btn mini" disabled={busy} onClick={() => ask(s)}>{s}</button>)}
           </div>
           {error && <p className="form-error" role="alert">{error}</p>}
@@ -63,9 +70,19 @@ export function AskPanel({ generative, provider }: { generative: boolean; provid
             {exchange.passages.length === 0 ? (
               <p className="note warn" style={{ marginTop: 12 }}>Nothing in the knowledge base matches this question. DataBrain will not make up an answer — add or import knowledge on this topic.</p>
             ) : (
-              exchange.passages.map((p) => (
+              <>
+                {exchange.answer && (
+                  <div style={{ marginTop: 12 }}>
+                    <div className="actions" style={{ marginBottom: 6 }}><Badge tone="warn">Generated — not validated</Badge><span className="muted">{exchange.answer.model}</span></div>
+                    <Markdown text={exchange.answer.text} />
+                    <p className="muted" style={{ margin: "8px 0 0" }}>Numbers in square brackets refer to the passages below, in order.</p>
+                  </div>
+                )}
+                {exchange.answerError && <p className="form-error" role="alert" style={{ marginTop: 12 }}>No answer was generated: {exchange.answerError} The matching passages are shown instead.</p>}
+              {exchange.passages.map((p, index) => (
                 <article key={p.item.id} style={{ borderTop: "1px solid var(--border)", marginTop: 14, paddingTop: 12 }}>
                   <div className="actions" style={{ marginBottom: 6 }}>
+                    <strong>[{index + 1}]</strong>
                     <Link href={`/knowledge/${p.item.slug}`}><strong>{p.item.title}</strong></Link>
                     <span className="muted">{knowledgeTypeLabel(p.item.type)}</span>
                     <TrustBadge status={p.item.status} />
@@ -75,7 +92,8 @@ export function AskPanel({ generative, provider }: { generative: boolean; provid
                   <p className="muted" style={{ margin: "6px 0 0" }}>Matched because: {p.why.join(" · ")}</p>
                   {p.sources.length ? p.sources.map((s) => <SourceCitation key={s.id} source={s} />) : <p className="muted">This item cites no sources.</p>}
                 </article>
-              ))
+              ))}
+              </>
             )}
           </section>
         ))}

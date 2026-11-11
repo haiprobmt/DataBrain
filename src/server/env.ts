@@ -19,6 +19,13 @@ export const env = {
   get llmProvider() {
     return process.env.LLM_PROVIDER ?? "local";
   },
+  get anthropicModel() {
+    return process.env.ANTHROPIC_MODEL?.trim() || "claude-opus-5-5";
+  },
+  /** True when the server has an Anthropic credential. The value itself is never read here or shown anywhere. */
+  get hasAnthropicCredential() {
+    return !!(process.env.ANTHROPIC_API_KEY?.trim() || process.env.ANTHROPIC_AUTH_TOKEN?.trim());
+  },
   get embeddingProvider() {
     return process.env.EMBEDDING_PROVIDER ?? "local";
   },

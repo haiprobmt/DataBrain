@@ -3,6 +3,7 @@ import { Card, EmptyState, StatusBadge } from "@/components/ui";
 import { formatDate } from "@/lib/utils";
 import { requireCtx } from "@/server/auth";
 import { listDecisions, listRevisions, revisionIssues } from "@/server/services/blueprint";
+import { providerStatus } from "@/server/providers";
 import { BlueprintEditor } from "./blueprint-editor";
 import { DecisionsPanel } from "./decisions-panel";
 
@@ -24,6 +25,8 @@ export default async function BlueprintPage({ params, searchParams }: { params: 
   }
   const revision = revisions.find((r) => r.id === wanted) ?? revisions[0]!;
   const readOnly = ctx.role === "viewer";
+  const llm = providerStatus().find((p) => p.kind === "LLM");
+  const aiModel = llm?.available && llm.configured !== "local" ? llm.active : null;
 
   return (
     <div className="stack">
@@ -42,6 +45,7 @@ export default async function BlueprintPage({ params, searchParams }: { params: 
         projectId={projectId}
         readOnly={readOnly}
         canApprove={ctx.role === "owner"}
+        aiModel={aiModel}
         issues={revisionIssues(revision)}
         revision={{ id: revision.id, version: revision.version, status: revision.status, title: revision.title, label: revision.label, sections: revision.sections, diagram: revision.diagram, lockVersion: revision.lockVersion, contentHash: revision.contentHash, approvalNote: revision.approvalNote, approvedAt: revision.approvedAt ? revision.approvedAt.toISOString() : null }}
       />

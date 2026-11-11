@@ -25,6 +25,35 @@ export interface LLMProvider {
   readonly model: string;
   readonly isGenerative: boolean;
   extractRequirements(text: string): Promise<ExtractionResult>;
+  /** Write a first draft of one blueprint section. Only generative providers implement this. */
+  draftSection?(input: DraftSectionInput): Promise<GeneratedText>;
+  /** Answer a question using only the numbered passages supplied. Only generative providers implement this. */
+  answer?(question: string, passages: AnswerPassage[]): Promise<GeneratedText>;
+}
+
+export interface GeneratedText {
+  text: string;
+  /** The model that actually produced the text (a fallback model can differ from the configured one). */
+  model: string;
+}
+
+export interface DraftSectionInput {
+  projectName: string;
+  sectionTitle: string;
+  currentBody: string;
+  architectureTitle: string;
+  /** "Label: value" lines; unknown fields are stated as unknown. */
+  requirements: string[];
+  components: string[];
+  flows: string[];
+  referenceNotes: string[];
+}
+
+export interface AnswerPassage {
+  n: number;
+  title: string;
+  status: string;
+  text: string;
 }
 
 export interface EmbeddingProvider {

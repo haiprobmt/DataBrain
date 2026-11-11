@@ -9,6 +9,7 @@ import { assertCanEdit, type Ctx } from "../ctx";
 import { hashJson } from "../crypto";
 import { getDb, schema } from "../db";
 import { AppError, conflict, notFound, precondition } from "../errors";
+import { getLLM } from "../providers";
 import { getCandidate, type Candidate } from "./finder";
 import { getItemsByIds, getItemSources, type KnowledgeItem } from "./knowledge";
 import { getProject, getRequirements, type Project, type Requirement } from "./projects";
@@ -193,6 +194,40 @@ export async function updateRevision(ctx: Ctx, projectId: string, revisionId: st
   if (!updated) throw conflict("This blueprint was saved elsewhere since you opened it. Reload to see the latest version before saving again.", { currentLockVersion: revision.lockVersion });
   await audit(ctx, { action: "revision.update", entityType: "architecture_revision", entityId: revision.id, projectId: revision.projectId, summary: `Edited blueprint v${revision.version}` });
   return updated;
+}
+
+/**
+ * Ask the generative provider for a draft of one section. Nothing is saved: the draft goes back to the
+ * editor, where a person reviews it and saves it like any other edit.
+ */
+export async function draftSection(ctx: Ctx, projectId: string, revisionId: string, key: string) {
+  assertCanEdit(ctx);
+  const project = await getProject(ctx, projectId);
+  const revision = await getRevision(ctx, projectId, revisionId);
+  if (revision.status !== "draft") throw precondition(`Revision v${revision.version} is ${revision.status}. Create a new revision to draft changes.`);
+  const section = revision.sections.find((s) => s.key === key);
+  if (!section) throw notFound("Blueprint section");
+  const llm = getLLM();
+  if (!llm.draftSection) throw precondition("Drafting needs a generative model. Set LLM_PROVIDER=anthropic and ANTHROPIC_API_KEY on the server.");
+
+  const requirements = await getRequirements(ctx, projectId);
+  const knowledge = await getItemsByIds(ctx, revision.sourceItemIds);
+  const label = (id: string) => revision.diagram.nodes.find((n) => n.id === id)?.label ?? id;
+  const result = await llm.draftSection({
+    projectName: project.name,
+    sectionTitle: section.title,
+    currentBody: section.body,
+    architectureTitle: revision.title,
+    requirements: INTAKE_FIELDS.map((f) => {
+      const r = requirements.find((x) => x.field === f.key);
+      return `${f.label}: ${!r || r.state === "unknown" ? "unknown" : r.state === "not-applicable" ? "not applicable" : `${r.value}${r.kind === "assumption" ? " (assumption, unconfirmed)" : ""}`}`;
+    }),
+    components: revision.diagram.nodes.map((n) => `${n.label} [${n.kind}]${n.technology ? ` — ${n.technology}` : ""}${n.description ? `: ${n.description}` : ""}`),
+    flows: revision.diagram.edges.map((e) => `${label(e.source)} → ${label(e.target)}${e.label ? ` (${e.label})` : ""}`),
+    referenceNotes: knowledge.map((k) => `${k.title} (${k.type}, ${k.status}): ${k.summary}`),
+  });
+  await audit(ctx, { action: "revision.draft-section", entityType: "architecture_revision", entityId: revision.id, projectId: project.id, summary: `Generated a draft of “${section.title}” with ${llm.name}`, metadata: { provider: llm.name, model: result.model, section: key } });
+  return { key, markdown: result.text, provider: llm.name, model: result.model };
 }
 
 export function revisionIssues(revision: Pick<Revision, "diagram" | "sections">): DiagramIssue[] {

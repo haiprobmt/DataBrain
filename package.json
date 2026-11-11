@@ -20,6 +20,7 @@
     "user:create": "tsx --env-file-if-exists=.env scripts/create-user.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@xyflow/react": "^12.12.1",
     "cytoscape": "^3.35.0",
     "diff": "^9.0.0",

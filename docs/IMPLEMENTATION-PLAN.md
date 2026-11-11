@@ -15,7 +15,7 @@ The repository was empty (no commits, no code). Nothing existing had to be prese
 | Database | PostgreSQL 16, Drizzle ORM, one SQL migration generated from `src/server/db/schema.ts` | System of record with reproducible migrations |
 | Search | PostgreSQL full-text (`tsvector`, GIN) + a local hashing embedding stored as `real[]`, combined in the service | Works with no extension and no paid service; pgvector stays optional |
 | Auth | Signed session cookie (HMAC), scrypt passwords, workspace membership with owner/editor/viewer; demo mode signs anonymous visitors in as the seeded demo user | An auth boundary every service call goes through, with zero setup for local demo |
-| Providers | Interfaces in `src/server/providers/types.ts`; only local deterministic implementations ship | Runs offline; an unknown provider name is an error, never a silent fallback |
+| Providers | Interfaces in `src/server/providers/types.ts`; local deterministic implementations for everything, plus an optional Anthropic `LLMProvider` | Runs offline; an unknown provider name is an error, never a silent fallback |
 | Jobs | Persisted `generation_jobs` rows, in-process runner, UI polls | No queue infrastructure for an MVP; state survives reloads |
 | UI kit | Hand-written components and CSS classes ported from the brand reference, Tailwind 4 for tokens | Closest match to the reference HTML; see deviations |
 
@@ -77,6 +77,6 @@ Integrity rules implemented: UUID keys, workspace scope on every query, unique v
 
 ## Next milestone
 
-1. A generative `LLMProvider` (extraction and section drafting) behind the existing interface, with its output labelled generated.
+1. ~~A generative `LLMProvider`~~ — added: `AnthropicProvider` (extraction with a quote-grounding check, section drafting, cited answers). Still to do: run it against the real API and tune the prompts on real briefs.
 2. A real `DeploymentAdapter` (Terraform plan/validate first), with credentials and scope agreed.
 3. PDF export; pgvector-backed embeddings; a persistent job queue.

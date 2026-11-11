@@ -5,6 +5,7 @@ import { effectiveWeights, listCandidates } from "@/server/services/finder";
 import { getItemsByIds } from "@/server/services/knowledge";
 import { getProject, getRequirements } from "@/server/services/projects";
 import { getDb, schema } from "@/server/db";
+import { providerStatus } from "@/server/providers";
 import { and, eq, inArray } from "drizzle-orm";
 import { BriefForm } from "./brief-form";
 import { FinderPanel } from "./finder-panel";
@@ -24,11 +25,13 @@ export default async function ProjectPage({ params, searchParams }: { params: Pr
     sourceIds.length ? getDb().select().from(schema.sources).where(and(eq(schema.sources.workspaceId, ctx.workspaceId), inArray(schema.sources.id, sourceIds))) : [],
   ]);
   const readOnly = ctx.role === "viewer" || project.status === "archived";
+  const llm = providerStatus().find((p) => p.kind === "LLM");
+  const extractor = { generative: !!llm?.available && llm.configured !== "local", name: llm?.active ?? "unavailable", error: llm?.available ? null : (llm?.note ?? null) };
 
   return (
     <div className="stack">
       <Card title="Project brief">
-        <BriefForm project={{ id: project.id, name: project.name, description: project.description, context: project.context, status: project.status }} hasRequirements={requirements.length > 0} readOnly={ctx.role === "viewer"} />
+        <BriefForm project={{ id: project.id, name: project.name, description: project.description, context: project.context, status: project.status }} hasRequirements={requirements.length > 0} readOnly={ctx.role === "viewer"} extractor={extractor} />
       </Card>
       <Card title="Requirements" id="requirements">
         <RequirementsEditor

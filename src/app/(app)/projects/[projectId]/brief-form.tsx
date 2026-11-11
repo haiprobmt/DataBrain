@@ -11,7 +11,7 @@ interface Brief {
   status: "active" | "archived";
 }
 
-export function BriefForm({ project, hasRequirements, readOnly }: { project: Brief; hasRequirements: boolean; readOnly: boolean }) {
+export function BriefForm({ project, hasRequirements, readOnly, extractor }: { project: Brief; hasRequirements: boolean; readOnly: boolean; extractor: { generative: boolean; name: string; error: string | null } }) {
   const [form, setForm] = useState({ name: project.name, description: project.description, context: project.context });
   const [result, setResult] = useState<string | null>(null);
   const { run, busy, error, fieldErrors } = useAction();
@@ -37,7 +37,13 @@ export function BriefForm({ project, hasRequirements, readOnly }: { project: Bri
       <div className="field">
         <label htmlFor="brief-context">Project context</label>
         <textarea id="brief-context" className="textarea" style={{ minHeight: 150 }} value={form.context} disabled={locked} onChange={(e) => setForm({ ...form, context: e.target.value })} />
-        <span className="hint">Extraction reads only this text, using local vocabulary rules (no generative model is configured). Fields it finds nothing for are listed as unknown.</span>
+        <span className="hint">
+          {extractor.error
+            ? `Extraction is unavailable: ${extractor.error}`
+            : extractor.generative
+              ? `Extraction sends this text to ${extractor.name}. Each extracted fact must quote the sentence it came from; facts whose quote is not in your text are discarded. Fields it finds nothing for are listed as unknown.`
+              : "Extraction reads only this text, using local vocabulary rules (no generative model is configured). Fields it finds nothing for are listed as unknown."}
+        </span>
         <FieldError errors={fieldErrors.context} />
       </div>
       {error && <p className="form-error" role="alert">{error.message}</p>}

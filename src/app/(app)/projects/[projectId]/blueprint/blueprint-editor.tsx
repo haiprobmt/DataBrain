@@ -98,7 +98,7 @@ function Canvas({ diagram, editable, selection, onSelect, onMove, onConnect, onD
   );
 }
 
-export function BlueprintEditor({ projectId, revision, issues, readOnly, canApprove }: { projectId: string; revision: RevisionView; issues: DiagramIssue[]; readOnly: boolean; canApprove: boolean }) {
+export function BlueprintEditor({ projectId, revision, issues, readOnly, canApprove, aiModel }: { projectId: string; revision: RevisionView; issues: DiagramIssue[]; readOnly: boolean; canApprove: boolean; aiModel: string | null }) {
   const router = useRouter();
   const editable = revision.status === "draft" && !readOnly;
   const [title, setTitle] = useState(revision.title);
@@ -109,6 +109,8 @@ export function BlueprintEditor({ projectId, revision, issues, readOnly, canAppr
   const [approving, setApproving] = useState(false);
   const [note, setNote] = useState("");
   const [approveError, setApproveError] = useState<string | null>(null);
+  const [drafting, setDrafting] = useState<string | null>(null);
+  const [draftNote, setDraftNote] = useState<{ key: string; text: string; error: boolean } | null>(null);
   const { run, busy, error } = useAction();
   const dirty = title !== revision.title || sections !== revision.sections || diagram !== revision.diagram;
   useUnsavedWarning(dirty);
@@ -141,6 +143,20 @@ export function BlueprintEditor({ projectId, revision, issues, readOnly, canAppr
 
   const save = () => run("save", () => api<{ lockVersion: number }>(`/api/projects/${projectId}/revisions/${revision.id}`, { method: "PUT", body: { lockVersion: revision.lockVersion, title, sections, diagram } }), "Blueprint saved.");
   const fileBase = `blueprint-v${revision.version}`;
+  const draftWithAi = async (key: string) => {
+    setDrafting(key);
+    setDraftNote(null);
+    try {
+      const result = await api<{ markdown: string; model: string }>(`/api/projects/${projectId}/revisions/${revision.id}/draft-section`, { body: { key } });
+      setSections((all) => all.map((s) => (s.key === key ? { ...s, body: result.markdown, origin: "generated" as const, edited: false } : s)));
+      setPreview(false);
+      setDraftNote({ key, error: false, text: `Draft written by ${result.model}. It is generated and not validated — review it, edit it, then save. Use “Discard changes” to go back to the saved text.` });
+    } catch (e) {
+      setDraftNote({ key, error: true, text: errorMessage(e) });
+    } finally {
+      setDrafting(null);
+    }
+  };
 
   return (
     <section className="card padding">
@@ -203,9 +219,16 @@ export function BlueprintEditor({ projectId, revision, issues, readOnly, canAppr
                 <h3>{section.title}</h3>
                 <div className="actions">
                   <OriginBadge origin={section.origin} edited={section.edited} />
+                  {editable && aiModel && (
+                    <button type="button" className="btn mini ghost" disabled={drafting !== null} onClick={() => draftWithAi(section.key)}>
+                      {drafting === section.key ? "Claude is drafting…" : "Draft with Claude"}
+                    </button>
+                  )}
                   {editable && <button type="button" className="btn mini" onClick={() => setPreview((p) => !p)}>{preview ? "Edit" : "Preview"}</button>}
                 </div>
               </div>
+              {drafting === section.key && <p className="note" role="status">Sending this project&rsquo;s requirements and components to {aiModel}. This can take up to a minute.</p>}
+              {draftNote?.key === section.key && <p className={draftNote.error ? "form-error" : "note warn"} role={draftNote.error ? "alert" : "status"}>{draftNote.text}</p>}
               {editable && !preview ? (
                 <div className="field">
                   <label htmlFor="section-body" className="sr-only">{section.title} (Markdown)</label>

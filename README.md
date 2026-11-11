@@ -20,7 +20,7 @@ A personal Data & AI Architecture Intelligence Platform. It keeps a knowledge ba
 
 ## Read this before relying on it
 
-- **No generative AI is configured.** Requirement extraction is vocabulary and pattern matching over your own text. Artifacts and skills come from fixed templates. The AI Workspace quotes stored passages; it writes nothing.
+- **Generative AI is off by default.** With `LLM_PROVIDER=local`, requirement extraction is vocabulary and pattern matching over your own text and the AI Workspace only quotes stored passages. You can switch on Claude (see “Using Claude”). Artifacts and skills always come from fixed templates.
 - **The seeded knowledge is demo content.** It was written from general platform knowledge and has **not** been checked against the documentation pages it cites. Every item is seeded as a draft, flagged “Demo”, with no verification date.
 - **Nothing is deployed.** The only deployment adapter is a simulator. It runs real read-only checks on the generated files (checksums, syntax, secret scan) and reports everything that needs a real platform as “not run”. An approved execution rehearses the approval flow and creates nothing.
 - **Scores are decision aids.** No prices, SKUs, network ranges or tenant IDs are ever generated; those are marked `TODO` or `PLACEHOLDER`.
@@ -57,6 +57,27 @@ Open http://localhost:3000. In demo mode you are signed in as the seeded demo us
 
 Without Docker, create the role and databases yourself: a `databrain` role with password `databrain`, owning databases `databrain` and `databrain_test`.
 
+### Using Claude
+
+Set these in `.env` (server-side only; `.env` is git-ignored) and restart the app:
+
+```
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=<your key>
+```
+
+`ANTHROPIC_MODEL` is optional and defaults to `claude-opus-5-5`. With Claude on:
+
+| Where | What Claude does | Guard |
+|---|---|---|
+| Project brief → Extract requirements | Reads the brief and fills the intake fields | Every fact must quote the sentence it came from; a fact whose quote is not in your text is discarded. You still review and approve. |
+| Solution Blueprint → a section → “Draft with Claude” | Writes a draft of that section from the requirements, components and flows | Nothing is saved until you save; the section is labelled generated; unknown values are written as `TODO` / `PLACEHOLDER`. |
+| AI Workspace | Writes an answer from the retrieved passages, with `[n]` citations | Instructed to use only those passages; shown as “Generated — not validated” above the passages themselves. |
+
+Project briefs, requirements, component lists and retrieved knowledge passages are sent to the Anthropic API. If a request is declined by the model, the API retries it on a fallback model in the same call (`fallbacks: "default"`); the model that actually answered is shown and recorded in the audit log. If the key is missing or rejected, the feature reports the error — it does not fall back to the local rules.
+
+**Not verified:** this integration was type-checked, unit-tested with a stubbed client, and run end to end against a local mock of the Messages API. It has not been run against the real Anthropic API, because no key was available where it was built.
+
 ### Accounts without demo mode
 
 Set `DATABRAIN_DEMO_MODE=false` and a real `SESSION_SECRET`, then create a user:
@@ -83,7 +104,7 @@ DATABRAIN_NEW_PASSWORD="a-long-password" npm run user:create -- you@example.com 
 |---|---|
 | `npm run lint` | Clean |
 | `npm run typecheck` | Clean |
-| `npm run test:unit` | 23 passed |
+| `npm run test:unit` | 29 passed |
 | `npm run test:integration` | 22 passed |
 | `npm run build` | Succeeded |
 | `npm run test:e2e` | 14 passed, including an axe scan of 14 pages and overflow checks at 820 px and 390 px |
@@ -105,7 +126,7 @@ drizzle            SQL migrations
 tests              unit / integration / e2e
 ```
 
-Every service function takes a request context and scopes its queries to that workspace; a record in another workspace is reported as not found. Provider interfaces (`LLMProvider`, `EmbeddingProvider`, `Reranker`, `DocumentExtractor`, `ObjectStorage`, `DeploymentAdapter`, `SourceConnector`) are in `src/server/providers/types.ts`. Naming a provider that has no implementation is a configuration error — the app does not fall back to a local stand-in.
+Every service function takes a request context and scopes its queries to that workspace; a record in another workspace is reported as not found. Provider interfaces (`LLMProvider`, `EmbeddingProvider`, `Reranker`, `DocumentExtractor`, `ObjectStorage`, `DeploymentAdapter`, `SourceConnector`) are in `src/server/providers/types.ts`. `LLM_PROVIDER` accepts `local` or `anthropic`; the other providers are local only. Naming a provider that has no implementation is a configuration error — the app does not fall back to a local stand-in.
 
 Security controls in place: signed HTTP-only session cookie, scrypt password hashes, role checks (owner / editor / viewer), same-origin check on state-changing requests, 2 MB body limit, per-user rate limit, login throttling, Zod validation at every API boundary, secret scan on generated files, redaction of evidence output, audit events for create / update / approve / export / deploy.
 

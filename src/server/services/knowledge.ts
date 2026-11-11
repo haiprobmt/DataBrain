@@ -9,7 +9,7 @@ import { sha256 } from "../crypto";
 import { getDb, schema, type Tx } from "../db";
 import { env } from "../env";
 import { AppError, conflict, notFound, precondition } from "../errors";
-import { getEmbeddings, getExtractors, getReranker, getStorage } from "../providers";
+import { getEmbeddings, getExtractors, getLLM, getReranker, getStorage } from "../providers";
 import { cosine } from "../providers/local";
 
 const k = schema.knowledgeItems;
@@ -618,8 +618,20 @@ export async function ask(ctx: Ctx, question: string) {
       sources: sources.filter((s) => s.itemId === hit.item.id).map((s) => ({ id: s.source.id, title: s.source.title, url: s.source.url, sourceType: s.source.sourceType })),
     };
   });
-  await audit(ctx, { action: "workspace.ask", entityType: "knowledge", summary: "Asked the knowledge base a question", metadata: { results: passages.length } });
-  return { mode: "extractive" as const, provider: "local-retrieval", passages };
+  // With a generative provider, Claude writes an answer from these passages only. If that call fails,
+  // the passages are still returned and the failure is reported — never replaced by something made up.
+  const llm = getLLM();
+  let answer: { text: string; model: string } | null = null;
+  let answerError: string | null = null;
+  if (llm.answer && passages.length > 0) {
+    try {
+      answer = await llm.answer(question, passages.map((p, i) => ({ n: i + 1, title: p.item.title, status: p.item.status, text: p.passage })));
+    } catch (error) {
+      answerError = error instanceof Error ? error.message : "The answer could not be generated.";
+    }
+  }
+  await audit(ctx, { action: "workspace.ask", entityType: "knowledge", summary: "Asked the knowledge base a question", metadata: { results: passages.length, provider: llm.name, model: answer?.model ?? null, generated: !!answer } });
+  return { mode: answer ? ("generated" as const) : ("extractive" as const), provider: llm.name, answer, answerError, passages };
 }
 
 export async function knowledgeStats(ctx: Ctx) {
