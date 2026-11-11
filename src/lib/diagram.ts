@@ -34,7 +34,7 @@ const esc = (text: string) => text.replace(/"/g, "'").replace(/[\[\]{}|<>]/g, " 
 const xml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 export function toMermaid(diagram: DiagramModel): string {
-  const lines = ["flowchart LR"];
+  const lines = ["flowchart TB"];
   for (const kind of NODE_KINDS) {
     const nodes = diagram.nodes.filter((n) => n.kind === kind.key);
     if (nodes.length === 0) continue;

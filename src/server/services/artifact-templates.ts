@@ -312,7 +312,7 @@ export function renderArtifact(type: string, d: TemplateData): string {
     case "executive-summary":
       return doc(d, "Executive summary", ["executive-summary", "selected-option", "risks"]);
     case "hld":
-      return doc(d, "High-level design", ["executive-summary", "context-requirements", "selected-option", "l0-context", "l1-logical", "data-flows", "identity-security", "governance", "sizing-cost", "risks", "sources"]);
+      return `${header(d, "High-level design")}\n${sections(d, ["executive-summary", "context-requirements", "selected-option", "l0-context", "l1-logical"])}\n\n## Architecture diagram\n\n\`\`\`mermaid\n${toMermaid(d.revision.diagram)}\`\`\`\n\n${sections(d, ["data-flows", "identity-security", "governance", "sizing-cost", "risks", "sources"])}\n\n${footer(d)}`;
     case "lld":
       return doc(d, "Low-level design", ["l2-components", "l3-deployment", "data-flows", "network-dns", "identity-security", "devops-iac", "monitoring-dr"]);
     case "adr":

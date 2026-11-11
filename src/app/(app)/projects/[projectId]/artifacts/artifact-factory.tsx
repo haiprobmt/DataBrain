@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api, ApiError, Dialog, errorMessage, JobStatus, newKey, useJob, useToast, useUnsavedWarning, type JobView } from "@/components/client";
 import { Markdown } from "@/components/markdown";
+import { MermaidDiagram } from "@/components/rich-blocks";
 import { Badge, EmptyState, StatusBadge } from "@/components/ui";
 import { ARTIFACT_CATEGORIES, ARTIFACT_DEFS } from "@/lib/artifact-catalog";
 import type { ArtifactValidation } from "@/lib/types";
@@ -170,7 +171,7 @@ export function ArtifactFactory({ projectId, approved, artifacts, manifests, rea
                 </div>
               </div>
               <div className="tabs" role="tablist" style={{ marginBottom: 0 }}>
-                {(["view", "raw", "diff", "edit"] as const).filter((m) => (m !== "view" || detail.artifact.format === "markdown") && (m !== "edit" || (!readOnly && isLatest))).map((m) => (
+                {(["view", "raw", "diff", "edit"] as const).filter((m) => (m !== "view" || detail.artifact.format === "markdown" || detail.artifact.format === "mermaid") && (m !== "edit" || (!readOnly && isLatest))).map((m) => (
                   <button key={m} type="button" role="tab" aria-selected={mode === m} className={mode === m ? "current" : undefined} onClick={() => setMode(m)}>
                     {m === "view" ? "Preview" : m === "raw" ? "Source" : m === "diff" ? "Changes from previous version" : "Edit"}
                   </button>
@@ -216,6 +217,8 @@ export function ArtifactFactory({ projectId, approved, artifacts, manifests, rea
                     ))}
                   </pre>
                 )
+              ) : mode === "view" && detail.artifact.format === "mermaid" ? (
+                <MermaidDiagram code={detail.revision.content} title={detail.artifact.name} />
               ) : mode === "view" && detail.artifact.format === "markdown" ? (
                 <div style={{ maxHeight: 560, overflow: "auto" }} tabIndex={0} role="region" aria-label="Document preview"><Markdown text={detail.revision.content} /></div>
               ) : (

@@ -18,6 +18,14 @@ export async function markdownToDocx(markdown: string): Promise<Buffer> {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     if (!line.trim()) continue;
+    if (/^\s*```/.test(line)) {
+      // Fenced blocks (code, Mermaid source) are kept verbatim in a monospace font; Word cannot draw the diagram.
+      const mermaid = /mermaid/i.test(line);
+      if (mermaid) children.push(new Paragraph({ children: [new TextRun({ text: "Diagram source (Mermaid). The rendered diagram is in the DataBrain app and in diagrams/architecture.mmd.", italics: true })] }));
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i] ?? "")) children.push(new Paragraph({ children: [new TextRun({ text: lines[i++] ?? "", font: "Consolas", size: 18 })] }));
+      continue;
+    }
     const heading = line.match(/^(#{1,4})\s+(.*)$/);
     if (heading) {
       const level = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3, HeadingLevel.HEADING_4][heading[1]!.length - 1];

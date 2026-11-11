@@ -18,6 +18,8 @@ A personal Data & AI Architecture Intelligence Platform. It keeps a knowledge ba
 | AI Workspace | Questions answered by quoting stored passages with citations |
 | Settings | Providers, workspace settings, source register, audit log |
 
+Text stored as Markdown (knowledge articles, blueprint sections, generated documents, skills, decision records, AI answers) is rendered with styled headings, nested and task lists, tables, call-outs and code blocks. A fenced `mermaid` block is drawn as a diagram with Diagram / Code views, copy, SVG download and an enlarged view; scenario pages and the generated HLD include the architecture diagram this way.
+
 ## Read this before relying on it
 
 - **Generative AI is off by default.** With `LLM_PROVIDER=local`, requirement extraction is vocabulary and pattern matching over your own text and the AI Workspace only quotes stored passages. You can switch on Claude (see “Using Claude”). Artifacts and skills always come from fixed templates.

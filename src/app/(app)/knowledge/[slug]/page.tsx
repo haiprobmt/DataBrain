@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Markdown } from "@/components/markdown";
+import { MermaidDiagram } from "@/components/rich-blocks";
+import { toMermaid } from "@/lib/diagram";
 import { Badge, Card, OriginTag, PageHeader, SourceCitation, TrustBadge, VersionHistory } from "@/components/ui";
 import { knowledgeTypeLabel, sourceTypeLabel, TRUST_LABELS } from "@/lib/catalog";
 import { formatDate, formatDateTime } from "@/lib/utils";
@@ -75,9 +77,14 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
                   {key === "steps" ? <ol style={{ margin: "4px 0 0", paddingLeft: 20 }}>{a[key]!.map((v, i) => <li key={i}>{v}</li>)}</ol> : <ul style={{ margin: "4px 0 0", paddingLeft: 20 }}>{a[key]!.map((v, i) => <li key={i}>{v}</li>)}</ul>}
                 </div>
               ) : null)}
+              {a.diagram && a.diagram.nodes.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <MermaidDiagram code={toMermaid(a.diagram)} title="Reference architecture" />
+                </div>
+              )}
               {a.diagram && (
-                <details style={{ marginTop: 12 }}>
-                  <summary style={{ cursor: "pointer" }}><strong>Reference architecture</strong> — {a.diagram.nodes.length} components, {a.diagram.edges.length} connections</summary>
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ cursor: "pointer" }}><strong>Component list</strong> — {a.diagram.nodes.length} components, {a.diagram.edges.length} connections</summary>
                   <div className="table-wrap"><table className="table"><thead><tr><th>Component</th><th>Type</th><th>Technology</th><th>Purpose</th></tr></thead><tbody>{a.diagram.nodes.map((n) => <tr key={n.id}><td><strong>{n.label}</strong></td><td>{n.kind}</td><td>{n.technology}</td><td>{n.description}</td></tr>)}</tbody></table></div>
                   <p className="muted">Create a blueprint from this scenario in the Architecture Finder to edit the diagram.</p>
                 </details>
