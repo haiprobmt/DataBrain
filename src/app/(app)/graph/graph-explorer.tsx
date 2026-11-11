@@ -4,10 +4,10 @@ import type { Core } from "cytoscape";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "@/components/client";
-import { DemoTag, EmptyState, TrustBadge } from "@/components/ui";
+import { EmptyState, OriginTag, TrustBadge } from "@/components/ui";
 import { KNOWLEDGE_TYPES, knowledgeTypeLabel, TYPE_COLORS } from "@/lib/catalog";
 
-interface GraphNode { id: string; slug: string; title: string; type: string; status: string; summary: string; isDemo: boolean; degree: number }
+interface GraphNode { id: string; slug: string; title: string; type: string; status: string; summary: string; isDemo: boolean; origin: string; degree: number }
 interface GraphEdge { id: string; fromId: string; toId: string; type: string }
 interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; truncated: boolean }
 
@@ -183,7 +183,7 @@ export function GraphExplorer({ initialFocus }: { initialFocus: string | null })
             <div>
               <h2 style={{ fontSize: 17, margin: 0 }}>{node.title}</h2>
               <p className="sub">{knowledgeTypeLabel(node.type)}</p>
-              <div className="actions" style={{ marginTop: 8 }}><TrustBadge status={node.status} />{node.isDemo && <DemoTag />}</div>
+              <div className="actions" style={{ marginTop: 8 }}><TrustBadge status={node.status} /><OriginTag isDemo={node.isDemo} origin={node.origin} /></div>
             </div>
             <p style={{ margin: 0, color: "#3b557d", fontSize: 13 }}>{node.summary}</p>
             <div className="actions">

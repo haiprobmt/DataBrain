@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, DemoTag, EmptyState, PageHeader, TrustBadge } from "@/components/ui";
+import { Card, EmptyState, OriginTag, PageHeader, TrustBadge } from "@/components/ui";
 import { requireCtx } from "@/server/auth";
 import { getItem, getRelated, listItems } from "@/server/services/knowledge";
 
@@ -47,7 +47,7 @@ export default async function ComparePage({ searchParams }: { searchParams: Prom
           ) : (
             <div className="table-wrap">
               <table className="table">
-                <thead><tr><th style={{ width: 150 }}></th>{selected.map((item) => <th key={item.id}><Link href={`/knowledge/${item.slug}`}>{item.title}</Link> {item.isDemo && <DemoTag />}</th>)}</tr></thead>
+                <thead><tr><th style={{ width: 150 }}></th>{selected.map((item) => <th key={item.id}><Link href={`/knowledge/${item.slug}`}>{item.title}</Link> <OriginTag isDemo={item.isDemo} origin={item.origin} /></th>)}</tr></thead>
                 <tbody>
                   <tr><td><strong>Trust</strong></td>{selected.map((item) => <td key={item.id}><TrustBadge status={item.status} lastVerifiedAt={item.lastVerifiedAt} /></td>)}</tr>
                   <tr><td><strong>Summary</strong></td>{selected.map((item) => <td key={item.id}>{item.summary}</td>)}</tr>

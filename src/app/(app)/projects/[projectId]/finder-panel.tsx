@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, FieldError, useAction } from "@/components/client";
-import { Badge, CandidateLabel, DemoTag, EmptyState, ScoreBar, SourceCitation, TrustBadge, type CitationSource } from "@/components/ui";
+import { Badge, CandidateLabel, EmptyState, OriginTag, ScoreBar, SourceCitation, TrustBadge, type CitationSource } from "@/components/ui";
 import { DEFAULT_WEIGHTS, FACTOR_LABELS, knowledgeTypeLabel } from "@/lib/catalog";
 import { FACTOR_KEYS, type CandidateFactor, type FinderWeights } from "@/lib/types";
 import { formatDateTime, pct } from "@/lib/utils";
@@ -25,7 +25,7 @@ interface CandidateView {
   matchReasons: string[];
   generator: string;
   weights: FinderWeights;
-  scenario: { slug: string; status: string; isDemo: boolean } | null;
+  scenario: { slug: string; status: string; isDemo: boolean; origin: string } | null;
   related: { slug: string; title: string; type: string; status: string }[];
   sources: CitationSource[];
   revisionVersion: number | null;
@@ -109,7 +109,7 @@ export function FinderPanel(props: Props) {
                 <article key={c.id} className="card padding" style={{ boxShadow: "none", borderColor: expanded ? "#f6c791" : undefined }}>
                   <div className="pane-head" style={{ marginBottom: 8 }}>
                     <h3 style={{ fontSize: 15 }}>
-                      {c.rank}. {c.title} {c.scenario?.isDemo && <DemoTag />}
+                      {c.rank}. {c.title} {c.scenario && <OriginTag isDemo={c.scenario.isDemo} origin={c.scenario.origin} />}
                     </h3>
                     <div className="actions">
                       <CandidateLabel label={c.label} />

@@ -489,7 +489,7 @@ export async function getGraph(ctx: Ctx, options: { focusId?: string; depth?: nu
     degree.set(edge.toId, (degree.get(edge.toId) ?? 0) + 1);
   }
   return {
-    nodes: nodes.map((n) => ({ id: n.id, slug: n.slug, title: n.title, type: n.type, status: n.status, summary: n.summary, isDemo: n.isDemo, degree: degree.get(n.id) ?? 0 })),
+    nodes: nodes.map((n) => ({ id: n.id, slug: n.slug, title: n.title, type: n.type, status: n.status, summary: n.summary, isDemo: n.isDemo, origin: n.origin, degree: degree.get(n.id) ?? 0 })),
     edges,
     truncated,
   };
@@ -612,7 +612,7 @@ export async function ask(ctx: Ctx, question: string) {
       .map((text) => ({ text, score: queryTokens.filter((t) => text.toLowerCase().includes(t)).length }))
       .sort((a, b) => b.score - a.score);
     return {
-      item: { id: hit.item.id, slug: hit.item.slug, title: hit.item.title, type: hit.item.type, status: hit.item.status, isDemo: hit.item.isDemo },
+      item: { id: hit.item.id, slug: hit.item.slug, title: hit.item.title, type: hit.item.type, status: hit.item.status, isDemo: hit.item.isDemo, origin: hit.item.origin },
       passage: (scored[0]?.text ?? hit.item.summary).slice(0, 700),
       why: hit.why,
       sources: sources.filter((s) => s.itemId === hit.item.id).map((s) => ({ id: s.source.id, title: s.source.title, url: s.source.url, sourceType: s.source.sourceType })),

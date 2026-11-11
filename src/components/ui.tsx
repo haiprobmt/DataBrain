@@ -24,6 +24,21 @@ export function DemoTag() {
   );
 }
 
+/** Marks library content an AI wrote from web research. It is still a draft: no person has reviewed it. */
+export function AiTag() {
+  return (
+    <span className="demo-tag" style={{ borderStyle: "solid" }} title="Written by an AI from web research of the cited pages. Not reviewed by a person — check it against its sources before relying on it.">
+      AI-researched
+    </span>
+  );
+}
+
+/** The Demo or AI-researched marker for a knowledge item, when it has one. */
+export function OriginTag({ isDemo, origin }: { isDemo?: boolean; origin?: string }) {
+  if (origin === "ai-researched") return <AiTag />;
+  return isDemo ? <DemoTag /> : null;
+}
+
 /** Review status of a knowledge item, plus a stale marker when its verification is older than the policy. */
 export function TrustBadge({ status, lastVerifiedAt, policyDays }: { status: string; lastVerifiedAt?: Date | string | null; policyDays?: number }) {
   const def = TRUST_LABELS[status as keyof typeof TRUST_LABELS] ?? TRUST_LABELS.draft;

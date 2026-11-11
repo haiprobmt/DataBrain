@@ -54,7 +54,10 @@ export default async function ProjectPage({ params, searchParams }: { params: Pr
           candidates={finder.candidates.map((c) => ({
             id: c.id, rank: c.rank, title: c.title, summary: c.summary, label: c.label, score: c.score, confidence: c.confidence, factors: c.factors, gaps: c.gaps, tradeoffs: c.tradeoffs,
             assumptions: c.assumptions, costDrivers: c.costDrivers, matchReasons: c.matchReasons, generator: c.generator, weights: c.weights,
-            scenario: related.find((r) => r.id === c.scenarioId) ? { slug: related.find((r) => r.id === c.scenarioId)!.slug, status: related.find((r) => r.id === c.scenarioId)!.status, isDemo: related.find((r) => r.id === c.scenarioId)!.isDemo } : null,
+            scenario: (() => {
+              const s = related.find((r) => r.id === c.scenarioId);
+              return s ? { slug: s.slug, status: s.status, isDemo: s.isDemo, origin: s.origin } : null;
+            })(),
             related: related.filter((r) => c.relatedItemIds.includes(r.id)).map((r) => ({ slug: r.slug, title: r.title, type: r.type, status: r.status })),
             sources: sources.filter((s) => c.sourceIds.includes(s.id)).map((s) => ({ id: s.id, title: s.title, url: s.url, sourceType: s.sourceType, lastVerifiedAt: s.lastVerifiedAt ? s.lastVerifiedAt.toISOString() : null, isDemo: s.isDemo })),
             revisionVersion: revisions.find((r) => r.candidateId === c.id)?.version ?? null,

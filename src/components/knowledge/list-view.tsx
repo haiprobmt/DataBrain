@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DemoTag, EmptyState, TrustBadge } from "@/components/ui";
+import { EmptyState, OriginTag, TrustBadge } from "@/components/ui";
 import { KNOWLEDGE_TYPES, knowledgeTypeLabel, sourceTypeLabel } from "@/lib/catalog";
 import { formatDate } from "@/lib/utils";
 import type { Ctx } from "@/server/ctx";
@@ -87,7 +87,7 @@ export async function KnowledgeListView({ ctx, basePath, types, query, emptyTitl
                 {rows.map(({ item, why, snippet }) => (
                   <tr key={item.id}>
                     <td style={{ maxWidth: 560 }}>
-                      <Link href={`/knowledge/${item.slug}`}>{item.title}</Link> {item.isDemo && <DemoTag />}
+                      <Link href={`/knowledge/${item.slug}`}>{item.title}</Link> <OriginTag isDemo={item.isDemo} origin={item.origin} />
                       <div className="muted">{snippet ? snippet.split(/[«»]/).map((part, i) => (i % 2 ? <mark key={i} style={{ background: "#fff1dd" }}>{part}</mark> : part)) : item.summary.length > 170 ? `${item.summary.slice(0, 170)}…` : item.summary}</div>
                       {why && why.length > 0 && <div className="muted" style={{ color: "#245fa8" }}>Why: {why.join(" · ")}</div>}
                     </td>

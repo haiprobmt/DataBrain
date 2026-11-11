@@ -4,11 +4,11 @@ import Link from "next/link";
 import { useState } from "react";
 import { api, ApiError, errorMessage } from "@/components/client";
 import { Markdown } from "@/components/markdown";
-import { Badge, DemoTag, EmptyState, SourceCitation, TrustBadge } from "@/components/ui";
+import { Badge, EmptyState, OriginTag, SourceCitation, TrustBadge } from "@/components/ui";
 import { knowledgeTypeLabel } from "@/lib/catalog";
 
 interface Passage {
-  item: { id: string; slug: string; title: string; type: string; status: string; isDemo: boolean };
+  item: { id: string; slug: string; title: string; type: string; status: string; isDemo: boolean; origin: string };
   passage: string;
   why: string[];
   sources: { id: string; title: string; url: string | null; sourceType: string }[];
@@ -86,7 +86,7 @@ export function AskPanel({ generative, provider, unavailable }: { generative: bo
                     <Link href={`/knowledge/${p.item.slug}`}><strong>{p.item.title}</strong></Link>
                     <span className="muted">{knowledgeTypeLabel(p.item.type)}</span>
                     <TrustBadge status={p.item.status} />
-                    {p.item.isDemo && <DemoTag />}
+                    <OriginTag isDemo={p.item.isDemo} origin={p.item.origin} />
                   </div>
                   <blockquote style={{ margin: 0, padding: "8px 14px", borderLeft: "3px solid var(--orange)", background: "#fffaf3", borderRadius: "0 10px 10px 0", color: "#263859" }}>{p.passage}</blockquote>
                   <p className="muted" style={{ margin: "6px 0 0" }}>Matched because: {p.why.join(" · ")}</p>

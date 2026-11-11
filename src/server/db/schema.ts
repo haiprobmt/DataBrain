@@ -87,7 +87,7 @@ export const knowledgeItems = pgTable(
     attributes: jsonb("attributes").$type<KnowledgeAttributes>().notNull().default({}),
     tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
     status: text("status").$type<"draft" | "reviewed" | "verified" | "archived">().notNull().default("draft"),
-    origin: text("origin").$type<"human" | "imported" | "generated" | "demo-seed">().notNull().default("human"),
+    origin: text("origin").$type<"human" | "imported" | "generated" | "demo-seed" | "ai-researched">().notNull().default("human"),
     sourceType: text("source_type").$type<"vendor-official" | "standards-framework" | "community" | "internal-experience" | "unspecified">().notNull().default("unspecified"),
     confidence: real("confidence"),
     version: integer("version").notNull().default(1),

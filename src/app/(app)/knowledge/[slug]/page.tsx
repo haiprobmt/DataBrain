@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Markdown } from "@/components/markdown";
-import { Badge, Card, DemoTag, PageHeader, SourceCitation, TrustBadge, VersionHistory } from "@/components/ui";
+import { Badge, Card, OriginTag, PageHeader, SourceCitation, TrustBadge, VersionHistory } from "@/components/ui";
 import { knowledgeTypeLabel, sourceTypeLabel, TRUST_LABELS } from "@/lib/catalog";
 import { formatDate, formatDateTime } from "@/lib/utils";
 import { tokenLabel } from "@/lib/vocab";
@@ -13,7 +13,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   return { title: decodeURIComponent((await params).slug).replace(/-/g, " ") };
 }
 
-const ORIGIN_TEXT: Record<string, string> = { human: "Written in DataBrain", imported: "Imported from a document", generated: "Generated", "demo-seed": "Demo seed content" };
+const ORIGIN_TEXT: Record<string, string> = { human: "Written in DataBrain", imported: "Imported from a document", generated: "Generated", "demo-seed": "Demo seed content", "ai-researched": "AI web research of the cited pages (not human-reviewed)" };
 
 export default async function KnowledgeItemPage({ params }: { params: Promise<{ slug: string }> }) {
   const ctx = await requireCtx();
@@ -45,10 +45,11 @@ export default async function KnowledgeItemPage({ params }: { params: Promise<{ 
           <Card>
             <div className="actions" style={{ marginBottom: 12 }}>
               <TrustBadge status={item.status} lastVerifiedAt={item.lastVerifiedAt} policyDays={detail.freshnessPolicyDays} />
-              {item.isDemo && <DemoTag />}
+              <OriginTag isDemo={item.isDemo} origin={item.origin} />
               {item.tags.map((t) => <span key={t} className="tag">{t}</span>)}
             </div>
             {item.isDemo && item.status === "draft" && <p className="note warn" style={{ marginBottom: 12 }}>Demo seed content written from general platform knowledge. It has not been checked against the sources listed. Review it before relying on it.</p>}
+            {item.origin === "ai-researched" && item.status === "draft" && <p className="note warn" style={{ marginBottom: 12 }}>Written by an AI from web research. The pages it relied on are listed under Sources, each with what it supports. It worked from search-result summaries, not full page reads, and no person has reviewed it — check it against the sources, then mark it reviewed or verified.</p>}
             <p style={{ fontSize: 14, color: "#263859", margin: 0 }}>{item.summary}</p>
           </Card>
           {item.sections.map((s) => (
