@@ -128,6 +128,13 @@ Workspaces are created in one place, `ensureWorkspace` in `src/server/seed/run.t
 | Stage in the address | `/lifecycle` redirects to `/lifecycle?stage=<current>` so the view stays on a stage after an action, and every stage has a stable link | Brief §7.6 |
 | Project root | `/projects/:id` is the overview. Requirements & Finder moved to `/projects/:id/requirements`; old `?run=` links are redirected | Brief §7.5 |
 | Milestones and risks | One page with two sections; `/projects/:id/risks` redirects to it | Fewer tabs; both are short lists |
+| Concurrency | Every lifecycle change (stages, checklist, evidence, approvals, lifecycle status) runs in one transaction that first takes a row lock on the project's lifecycle and re-reads the stages inside it. Template changes take a per-workspace advisory lock. Starting a lifecycle takes a shared lock on the template row while copying it | Checks made outside the write let concurrent requests slip an open checklist item past a gate, start a stage beside a reopened earlier one, or complete a lifecycle with an open stage. Found in review, reproduced, and covered by race tests |
+| Stage update | `PATCH …/stages/:id` applies field changes and an optional status change together or not at all | A refused status change must not leave half the request saved |
+| Who reviews | A reviewer must be an owner or editor. An editor cannot be the reviewer of their own request; an owner can. The reviewer cannot be changed while a request is open | A one-person workspace has only its owner; beyond that, one editor should not pass a gate alone |
+| Closing the lifecycle | Needs every required stage done and no stage (including an optional one) in progress, blocked or awaiting approval | Otherwise an open request would be stranded on a frozen lifecycle |
+| Reopening a skipped stage | Subject to the same ordering as starting it | A skipped stage is not touched by the reopen cascade, so it must not come back while an earlier stage is open |
+| Overdue | A stage is overdue once its due day has passed and it is not done — started or not — everywhere it is shown or counted | One definition for the stage view, progress, portfolio and Mission Control |
+| Audit content | Metadata holds IDs and state changes. A reason a person gave (block, skip, reopen, waive, reject) appears shortened in the event summary; evidence notes and URLs never do | The waiver reason has to outlive the waiver; evidence content does not belong in the log |
 
 ## Additions to the suggested data model
 
@@ -173,13 +180,14 @@ Severity and progress are not stored anywhere.
 | Workspace scope and roles on every service | integration “gives viewers read access and nothing else” (17 calls), “denies every cross-workspace read and write as not found” (51 calls); e2e viewer and other-workspace tests |
 | Mutating APIs use the wrapper and Zod | e2e “the lifecycle API validates input, hides unknown records and rejects cross-site writes” |
 | Audit events | integration “appends audit events…” |
+| Consistent under concurrent requests | integration “lifecycle consistency” (nine tests: gate, stage-order, completion, default-template and start-during-edit races; atomic stage update; reviewer rules; overdue) |
 | No overflow at 820 and 390 px; no serious axe violations | e2e “lifecycle pages fit tablet and phone widths”, “lifecycle pages have no serious or critical axe violations…” |
 
 ## Not built in this phase
 
 - Checklist items are never completed automatically from a source record. The three record-based conditions are gate rules, shown under Gate readiness; the matching checklist items (“Requirements approved in DataBrain”, “Blueprint approved in DataBrain”) are still ticked by a person.
 - Moving a running lifecycle to another template or a newer template version.
-- Member invitation and management screens; notifications and reminders; separation of duties between requester and approver.
+- Member invitation and management screens; notifications and reminders; separation of duties for owners (an owner may decide their own request).
 - File upload for evidence.
 - Everything listed as out of scope in the brief: catalog, lineage, connectors, data contracts, quality and test execution, monitoring, FinOps, new agents, new deployment adapters.
 

@@ -52,13 +52,13 @@ export function StagePanel({ projectId, stage, members, editable, isOwner, isCur
         </div>
       )}
       {status === "skipped" && <p className="note warn" style={{ marginBottom: 14 }}><strong>Skipped.</strong> {stage.skipReason}</p>}
-      {status === "pending_approval" && <p className="note" style={{ marginBottom: 14 }}>Waiting for approval. The checklist and evidence are frozen until the request is decided or withdrawn.</p>}
+      {status === "pending_approval" && <p className="note" style={{ marginBottom: 14 }}>Waiting for approval. The checklist, the evidence and the reviewer are frozen until the request is decided or withdrawn.</p>}
 
       {editable ? (
         <form onSubmit={details.submit} className="stack" style={{ gap: 12 }}>
           <div className="form-grid three">
             <MemberSelect label="Stage owner" value={form.ownerId} members={members} onChange={(ownerId) => setForm({ ...form, ownerId })} errors={details.fieldErrors.ownerId} />
-            <MemberSelect label="Reviewer" value={form.reviewerId} members={members} decidersOnly onChange={(reviewerId) => setForm({ ...form, reviewerId })} errors={details.fieldErrors.reviewerId} none="No reviewer" />
+            <MemberSelect label="Reviewer" value={form.reviewerId} members={members} decidersOnly disabled={status === "pending_approval"} onChange={(reviewerId) => setForm({ ...form, reviewerId })} errors={details.fieldErrors.reviewerId} none="No reviewer" />
             <div className="field">
               <label htmlFor="stage-due">Due date</label>
               <input id="stage-due" type="date" className="input" value={form.dueAt} onChange={(e) => setForm({ ...form, dueAt: e.target.value })} />

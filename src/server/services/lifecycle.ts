@@ -216,8 +216,8 @@ export async function listMembers(ctx: Ctx): Promise<Member[]> {
 }
 
 /** A user ID sent by a client is only accepted when that user is a member of the caller's workspace. */
-async function requireMember(ctx: Ctx, userId: string, field: string, options: { canDecide?: boolean } = {}): Promise<Member> {
-  const [member] = await getDb()
+async function requireMember(ctx: Ctx, userId: string, field: string, options: { canDecide?: boolean } = {}, tx: Tx = getDb()): Promise<Member> {
+  const [member] = await tx
     .select({ id: schema.users.id, name: schema.users.name, email: schema.users.email, role: schema.memberships.role })
     .from(schema.memberships)
     .innerJoin(schema.users, eq(schema.users.id, schema.memberships.userId))
@@ -241,21 +241,45 @@ async function findLifecycle(project: Project, tx: Tx = getDb()): Promise<Lifecy
   return lifecycle ?? null;
 }
 
-async function requireLifecycle(ctx: Ctx, projectId: string): Promise<{ project: Project; lifecycle: Lifecycle }> {
+/** Read path: resolve project → lifecycle → stage, so a stage ID is never used without proving it belongs to the caller's project. */
+async function requireStage(ctx: Ctx, projectId: string, stageId: string): Promise<{ project: Project; lifecycle: Lifecycle; stage: Stage }> {
   const project = await getProject(ctx, projectId);
   const lifecycle = await findLifecycle(project);
-  if (!lifecycle) throw notFound("Project lifecycle");
-  return { project, lifecycle };
+  if (!lifecycle || !UUID.test(stageId)) throw notFound(lifecycle ? "Lifecycle stage" : "Project lifecycle");
+  const [stage] = await getDb().select().from(st).where(and(eq(st.id, stageId), eq(st.projectLifecycleId, lifecycle.id), eq(st.workspaceId, ctx.workspaceId))).limit(1);
+  if (!stage) throw notFound("Lifecycle stage");
+  return { project, lifecycle, stage };
 }
 
-/** Resolve project → lifecycle → stage, so a stage ID is never used without proving it belongs to the caller's project. */
-async function requireStage(ctx: Ctx, projectId: string, stageId: string): Promise<{ project: Project; lifecycle: Lifecycle; stage: Stage; stages: Stage[] }> {
-  const { project, lifecycle } = await requireLifecycle(ctx, projectId);
-  if (!UUID.test(stageId)) throw notFound("Lifecycle stage");
-  const stages = await getDb().select().from(st).where(and(eq(st.projectLifecycleId, lifecycle.id), eq(st.workspaceId, ctx.workspaceId))).orderBy(asc(st.sortOrder));
-  const stage = stages.find((s) => s.id === stageId);
+/** What a lifecycle change works on: an open transaction, and the lifecycle and its stages as read inside it. */
+interface Scope {
+  tx: Tx;
+  project: Project;
+  lifecycle: Lifecycle;
+  stages: Stage[];
+}
+
+/**
+ * Write path. Every change to a lifecycle, its stages, checklists, evidence or approvals runs in one transaction
+ * that first locks the project's lifecycle row. Changes to one project are therefore serialised: the state a rule
+ * was checked against is the state the write is applied to, so two concurrent requests cannot both pass a gate
+ * or an ordering check that only one of them should.
+ */
+async function inLifecycle<T>(ctx: Ctx, projectId: string, work: (scope: Scope) => Promise<T>): Promise<T> {
+  const project = await getProject(ctx, projectId);
+  return getDb().transaction(async (tx) => {
+    const [lifecycle] = await tx.select().from(lc).where(and(eq(lc.projectId, project.id), eq(lc.workspaceId, ctx.workspaceId))).limit(1).for("update");
+    if (!lifecycle) throw notFound("Project lifecycle");
+    const stages = await tx.select().from(st).where(and(eq(st.projectLifecycleId, lifecycle.id), eq(st.workspaceId, ctx.workspaceId))).orderBy(asc(st.sortOrder));
+    return work({ tx, project, lifecycle, stages });
+  });
+}
+
+/** A stage ID is only valid when it is one of this lifecycle's stages. */
+function stageIn(scope: Scope, stageId: string): Stage {
+  const stage = UUID.test(stageId) ? scope.stages.find((s) => s.id === stageId) : undefined;
   if (!stage) throw notFound("Lifecycle stage");
-  return { project, lifecycle, stage, stages };
+  return stage;
 }
 
 function assertLifecycleActive(lifecycle: Lifecycle): void {
@@ -268,23 +292,28 @@ function assertStageOpen(stage: Stage): void {
   if (isStageDone(stage.status)) throw precondition(`“${stage.name}” is ${statusLabel(stage.status).toLowerCase()}. Reopen the stage to make changes.`);
 }
 
-async function loadFacts(project: Project): Promise<DeliveryFacts> {
-  const db = getDb();
+const required = (text: string, field: string, message: string): string => {
+  const value = text.trim();
+  if (!value) throw new AppError("validation_error", message, { [field]: ["A reason is required."] });
+  return value;
+};
+
+async function loadFacts(projectId: string, tx: Tx = getDb()): Promise<DeliveryFacts> {
   const rev = schema.architectureRevisions;
   const plans = schema.deploymentPlans;
   const runs = schema.deploymentRuns;
-  const [[revisions], currentPlans, [artifactRow]] = await Promise.all([
-    db.select({ total: sql<number>`count(*)::int`, approvedVersion: sql<number | null>`max(${rev.version}) filter (where ${rev.status} = 'approved')` }).from(rev).where(eq(rev.projectId, project.id)),
-    db.select({ id: plans.id, planHash: plans.planHash }).from(plans).where(and(eq(plans.projectId, project.id), eq(plans.status, "planned"))),
-    db.select({ n: sql<number>`count(*)::int` }).from(schema.artifacts).where(eq(schema.artifacts.projectId, project.id)),
-  ]);
+  // Sequential on purpose: inside a transaction all of these share one connection.
+  const [project] = await tx.select({ requirementsStatus: schema.projects.requirementsStatus }).from(schema.projects).where(eq(schema.projects.id, projectId));
+  const [revisions] = await tx.select({ total: sql<number>`count(*)::int`, approvedVersion: sql<number | null>`max(${rev.version}) filter (where ${rev.status} = 'approved')` }).from(rev).where(eq(rev.projectId, projectId));
+  const currentPlans = await tx.select({ id: plans.id, planHash: plans.planHash }).from(plans).where(and(eq(plans.projectId, projectId), eq(plans.status, "planned")));
+  const [artifactRow] = await tx.select({ n: sql<number>`count(*)::int` }).from(schema.artifacts).where(eq(schema.artifacts.projectId, projectId));
   // A dry-run only counts for the plan as it stands now: same plan, same hash, finished successfully.
   const dryRuns = currentPlans.length
-    ? await db.select({ planId: runs.planId, planHash: runs.planHash, simulated: runs.simulated }).from(runs).where(and(inArray(runs.planId, currentPlans.map((p) => p.id)), eq(runs.mode, "dry-run"), eq(runs.status, "succeeded")))
+    ? await tx.select({ planId: runs.planId, planHash: runs.planHash, simulated: runs.simulated }).from(runs).where(and(inArray(runs.planId, currentPlans.map((p) => p.id)), eq(runs.mode, "dry-run"), eq(runs.status, "succeeded")))
     : [];
   const matching = dryRuns.filter((r) => currentPlans.some((p) => p.id === r.planId && p.planHash === r.planHash));
   return {
-    requirementsStatus: project.requirementsStatus,
+    requirementsStatus: project?.requirementsStatus ?? "none",
     blueprint: { exists: (revisions?.total ?? 0) > 0, approved: revisions?.approvedVersion != null, approvedVersion: revisions?.approvedVersion ?? null },
     deployment: { planExists: currentPlans.length > 0, dryRunSucceeded: matching.length > 0, simulated: matching.length > 0 && matching.every((r) => r.simulated) },
     artifactCount: artifactRow?.n ?? 0,
@@ -306,14 +335,13 @@ function readinessFacts(stage: Stage, items: ChecklistItem[], evidence: Evidence
   };
 }
 
-async function stageGate(project: Project, stage: Stage, gate: "request" | "complete"): Promise<ReadinessResult> {
-  const db = getDb();
-  const [items, evidence, approvals, facts] = await Promise.all([
-    db.select().from(ci).where(eq(ci.stageInstanceId, stage.id)),
-    db.select().from(ev).where(eq(ev.stageInstanceId, stage.id)),
-    db.select().from(ap).where(eq(ap.stageInstanceId, stage.id)),
-    loadFacts(project),
-  ]);
+/** Evaluate a stage's gate from the records as they are inside the caller's transaction. */
+async function stageGate(scope: Scope, stage: Stage, gate: "request" | "complete"): Promise<ReadinessResult> {
+  const { tx } = scope;
+  const items = await tx.select().from(ci).where(eq(ci.stageInstanceId, stage.id));
+  const evidence = await tx.select().from(ev).where(eq(ev.stageInstanceId, stage.id));
+  const approvals = await tx.select().from(ap).where(eq(ap.stageInstanceId, stage.id));
+  const facts = await loadFacts(scope.project.id, tx);
   return evaluateReadiness(stage.readinessRules, readinessFacts(stage, items, evidence, approvals, facts), gate);
 }
 
@@ -324,7 +352,10 @@ function gateError(stage: Stage, action: string, blockers: Blocker[]): AppError 
 
 type AuditEntity = "project_lifecycle" | "lifecycle_stage" | "checklist_item" | "stage_evidence" | "stage_approval" | "project_milestone" | "project_risk";
 
-/** Lifecycle audit events share the `lifecycle.` prefix and carry IDs and state changes only. */
+/**
+ * Lifecycle audit events share the `lifecycle.` prefix. Metadata carries IDs and state changes only; a reason a
+ * person gave for a decision appears, shortened, in the summary.
+ */
 function record(ctx: Ctx, tx: Tx, project: Project, action: string, entityType: AuditEntity, entityId: string, summary: string, metadata: Record<string, unknown> = {}) {
   return audit(ctx, { action: `lifecycle.${action}`, entityType, entityId, projectId: project.id, summary, metadata }, tx);
 }
@@ -334,7 +365,7 @@ const stageMeta = (stage: Stage, extra: Record<string, unknown> = {}) => ({ stag
 // ── Read ────────────────────────────────────────────────────────────────────
 export async function getProjectLifecycle(ctx: Ctx, projectId: string, now: Date = new Date()): Promise<LifecycleView> {
   const project = await getProject(ctx, projectId);
-  const [lifecycle, facts] = await Promise.all([findLifecycle(project), loadFacts(project)]);
+  const [lifecycle, facts] = await Promise.all([findLifecycle(project), loadFacts(project.id)]);
   const base = { project: { id: project.id, name: project.name, status: project.status }, facts };
   if (!lifecycle) return { ...base, lifecycle: null, stages: [], progress: null };
 
@@ -485,13 +516,19 @@ export async function initializeProjectLifecycle(ctx: Ctx, projectId: string, te
   const project = await getProject(ctx, projectId);
   const already = () => conflict(`“${project.name}” already has a lifecycle. Open it to continue.`);
   if (await findLifecycle(project)) throw already();
-  const template = await resolveTemplateForStart(ctx, templateId);
-  const definitions = await loadTemplateStages(template.id);
-  if (!definitions.length) throw precondition(`“${template.name}” has no stages. Add stages to the template before using it.`);
-  const first = definitions.find((d) => d.isRequired) ?? definitions[0]!;
+  const chosen = await resolveTemplateForStart(ctx, templateId);
   const now = new Date();
+  const tpl = schema.lifecycleTemplates;
 
   await getDb().transaction(async (tx) => {
+    // A shared lock on the template row keeps a concurrent template edit from replacing its stages mid-copy.
+    const [template] = await tx.select().from(tpl).where(and(eq(tpl.id, chosen.id), eq(tpl.workspaceId, ctx.workspaceId))).limit(1).for("share");
+    if (!template) throw notFound("Lifecycle template");
+    if (!template.isActive) throw precondition(`“${template.name}” is deactivated and cannot start new lifecycles.`);
+    const definitions = await loadTemplateStages(template.id, tx);
+    if (!definitions.length) throw precondition(`“${template.name}” has no stages. Add stages to the template before using it.`);
+    const first = definitions.find((d) => d.isRequired) ?? definitions[0]!;
+
     const [lifecycle] = await tx
       .insert(lc)
       .values({ workspaceId: ctx.workspaceId, projectId: project.id, templateId: template.id, templateName: template.name, templateVersion: template.version, status: "active", startedAt: now, createdBy: ctx.userId })
@@ -529,21 +566,23 @@ export async function initializeProjectLifecycle(ctx: Ctx, projectId: string, te
 
 export async function updateLifecycle(ctx: Ctx, projectId: string, input: { status?: Exclude<LifecycleStatus, "not_started">; targetEndAt?: Date | null; note?: string }): Promise<LifecycleView> {
   assertCanEdit(ctx);
-  const { project, lifecycle } = await requireLifecycle(ctx, projectId);
-  const patch: Partial<Lifecycle> = {};
-  if (input.targetEndAt !== undefined) patch.targetEndAt = input.targetEndAt;
-  const to = input.status;
-  if (to && to !== lifecycle.status) {
-    if (!canTransitionLifecycle(lifecycle.status, to)) throw precondition(`A lifecycle that is ${statusLabel(lifecycle.status).toLowerCase()} cannot be set to ${statusLabel(to).toLowerCase()}.`);
-    if (to === "completed") {
-      const stages = await getDb().select({ name: st.name, status: st.status, isRequired: st.isRequired }).from(st).where(eq(st.projectLifecycleId, lifecycle.id));
-      const open = stages.filter((s) => s.isRequired && !isStageDone(s.status));
-      if (open.length) throw precondition(`The lifecycle can be completed once every required stage is completed or skipped. Still open: ${open.map((s) => s.name).join(", ")}.`);
+  await inLifecycle(ctx, projectId, async ({ tx, project, lifecycle, stages }) => {
+    const patch: Partial<Lifecycle> = {};
+    if (input.targetEndAt !== undefined) patch.targetEndAt = input.targetEndAt;
+    const to = input.status;
+    if (to && to !== lifecycle.status) {
+      if (!canTransitionLifecycle(lifecycle.status, to)) throw precondition(`A lifecycle that is ${statusLabel(lifecycle.status).toLowerCase()} cannot be set to ${statusLabel(to).toLowerCase()}.`);
+      if (to === "completed") {
+        const open = stages.filter((s) => s.isRequired && !isStageDone(s.status));
+        if (open.length) throw precondition(`The lifecycle can be completed once every required stage is completed or skipped. Still open: ${open.map((s) => s.name).join(", ")}.`);
+        // An optional stage that is under way would be frozen half-done, with any open approval request stranded.
+        const underWay = stages.filter((s) => s.status === "in_progress" || s.status === "blocked" || s.status === "pending_approval");
+        if (underWay.length) throw precondition(`Finish or skip ${underWay.map((s) => `“${s.name}”`).join(", ")} before completing the lifecycle.`);
+      }
+      patch.status = to;
+      patch.completedAt = to === "completed" ? new Date() : null;
     }
-    patch.status = to;
-    patch.completedAt = to === "completed" ? new Date() : null;
-  }
-  await getDb().transaction(async (tx) => {
+    if (!Object.keys(patch).length) return;
     await tx.update(lc).set(patch).where(eq(lc.id, lifecycle.id));
     if (patch.status) await record(ctx, tx, project, "status", "project_lifecycle", lifecycle.id, `Lifecycle set to ${statusLabel(patch.status).toLowerCase()}${input.note ? `: ${clip(input.note, 160)}` : ""}`, { from: lifecycle.status, to: patch.status });
     if (input.targetEndAt !== undefined && iso(input.targetEndAt) !== iso(lifecycle.targetEndAt)) await record(ctx, tx, project, "target-date", "project_lifecycle", lifecycle.id, input.targetEndAt ? `Target end date set to ${input.targetEndAt.toISOString().slice(0, 10)}` : "Target end date cleared", { from: iso(lifecycle.targetEndAt), to: iso(input.targetEndAt) });
@@ -552,7 +591,7 @@ export async function updateLifecycle(ctx: Ctx, projectId: string, input: { stat
 }
 
 // ── Stage transitions ───────────────────────────────────────────────────────
-/** Move a stage with a compare-and-set on its current status, so two concurrent transitions cannot both win. */
+/** Move a stage, guarded by the transition matrix and a compare-and-set on the status it was read with. */
 async function moveStage(tx: Tx, stage: Stage, to: StageStatus, patch: Partial<Stage> = {}): Promise<Stage> {
   if (!canTransitionStage(stage.status, to)) throw precondition(`“${stage.name}” is ${statusLabel(stage.status).toLowerCase()} and cannot move to ${statusLabel(to).toLowerCase()}.`);
   const [moved] = await tx.update(st).set({ ...patch, status: to }).where(and(eq(st.id, stage.id), eq(st.status, stage.status))).returning();
@@ -562,31 +601,55 @@ async function moveStage(tx: Tx, stage: Stage, to: StageStatus, patch: Partial<S
 
 const orderOf = (stages: Stage[]) => stages.map((s) => ({ id: s.id, name: s.name, sortOrder: s.sortOrder, isRequired: s.isRequired, status: s.status }));
 
+// The four transitions below take an open scope, so `updateStage` can apply field changes and a status change
+// in the same transaction; the exported functions wrap them.
+async function applyStart(ctx: Ctx, { tx, project, lifecycle, stages }: Scope, stage: Stage): Promise<void> {
+  assertLifecycleActive(lifecycle);
+  if (stage.status !== "not_started" && stage.status !== "blocked") throw precondition(`“${stage.name}” is already ${statusLabel(stage.status).toLowerCase()}.`);
+  const resumed = stage.status === "blocked";
+  const check = stageStartCheck(orderOf(stages), stage.id);
+  if (!check.allowed) throw precondition(`“${stage.name}” cannot ${resumed ? "resume" : "start"} yet. ${check.reason}`);
+  await moveStage(tx, stage, "in_progress", { startAt: stage.startAt ?? new Date(), blockedReason: null });
+  await record(ctx, tx, project, resumed ? "stage.unblock" : "stage.start", "lifecycle_stage", stage.id, resumed ? `Resumed stage “${stage.name}”` : `Started stage “${stage.name}”`, stageMeta(stage, { from: stage.status, to: "in_progress" }));
+}
+
+async function applyBlock(ctx: Ctx, { tx, project, lifecycle }: Scope, stage: Stage, reason: string): Promise<void> {
+  assertLifecycleActive(lifecycle);
+  const text = required(reason, "reason", "Say what is blocking the stage.");
+  await moveStage(tx, stage, "blocked", { blockedReason: text });
+  await record(ctx, tx, project, "stage.block", "lifecycle_stage", stage.id, `Marked stage “${stage.name}” blocked: ${clip(text, 160)}`, stageMeta(stage, { from: stage.status, to: "blocked" }));
+}
+
+async function applyComplete(ctx: Ctx, scope: Scope, stage: Stage, completionNote?: string): Promise<void> {
+  const { tx, project, lifecycle } = scope;
+  assertLifecycleActive(lifecycle);
+  if (stage.status !== "in_progress") throw precondition(`“${stage.name}” is ${statusLabel(stage.status).toLowerCase()}; only a stage in progress can be completed.`);
+  const gate = await stageGate(scope, stage, "complete");
+  if (!gate.ready) throw gateError(stage, "be completed", gate.blockers);
+  await moveStage(tx, stage, "completed", { completedAt: new Date(), completionNote: completionNote?.trim() || null, blockedReason: null });
+  await record(ctx, tx, project, "stage.complete", "lifecycle_stage", stage.id, `Completed stage “${stage.name}”`, stageMeta(stage, { from: stage.status, to: "completed" }));
+}
+
+async function applySkip(ctx: Ctx, { tx, project, lifecycle, stages }: Scope, stage: Stage, reason: string): Promise<void> {
+  assertLifecycleActive(lifecycle);
+  const text = required(reason, "reason", "Say why the stage is being skipped.");
+  if (stage.isRequired && ctx.role !== "owner") throw forbidden("Only a workspace owner can skip a required stage.");
+  const check = stageStartCheck(orderOf(stages), stage.id);
+  if (!check.allowed) throw precondition(`“${stage.name}” cannot be skipped yet. ${check.reason}`);
+  await moveStage(tx, stage, "skipped", { skipReason: text, completedAt: null, blockedReason: null });
+  await record(ctx, tx, project, "stage.skip", "lifecycle_stage", stage.id, `Skipped stage “${stage.name}”: ${clip(text, 160)}`, stageMeta(stage, { from: stage.status, to: "skipped", required: stage.isRequired }));
+}
+
 /** Start a stage that has not begun, or resume one that was blocked. */
 export async function startStage(ctx: Ctx, projectId: string, stageId: string): Promise<LifecycleView> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage, stages } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  if (stage.status !== "not_started" && stage.status !== "blocked") throw precondition(`“${stage.name}” is already ${statusLabel(stage.status).toLowerCase()}.`);
-  const check = stageStartCheck(orderOf(stages), stage.id);
-  if (!check.allowed) throw precondition(`“${stage.name}” cannot ${stage.status === "blocked" ? "resume" : "start"} yet. ${check.reason}`);
-  await getDb().transaction(async (tx) => {
-    const resumed = stage.status === "blocked";
-    await moveStage(tx, stage, "in_progress", { startAt: stage.startAt ?? new Date(), blockedReason: null });
-    await record(ctx, tx, project, resumed ? "stage.unblock" : "stage.start", "lifecycle_stage", stage.id, resumed ? `Resumed stage “${stage.name}”` : `Started stage “${stage.name}”`, stageMeta(stage, { from: stage.status, to: "in_progress" }));
-  });
+  await inLifecycle(ctx, projectId, (scope) => applyStart(ctx, scope, stageIn(scope, stageId)));
   return getProjectLifecycle(ctx, projectId);
 }
 
 export async function blockStage(ctx: Ctx, projectId: string, stageId: string, reason: string): Promise<LifecycleView> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  if (!reason.trim()) throw new AppError("validation_error", "Say what is blocking the stage.", { reason: ["A reason is required."] });
-  await getDb().transaction(async (tx) => {
-    await moveStage(tx, stage, "blocked", { blockedReason: reason.trim() });
-    await record(ctx, tx, project, "stage.block", "lifecycle_stage", stage.id, `Marked stage “${stage.name}” blocked: ${clip(reason.trim(), 160)}`, stageMeta(stage, { from: stage.status, to: "blocked" }));
-  });
+  await inLifecycle(ctx, projectId, (scope) => applyBlock(ctx, scope, stageIn(scope, stageId), reason));
   return getProjectLifecycle(ctx, projectId);
 }
 
@@ -596,31 +659,14 @@ export async function blockStage(ctx: Ctx, projectId: string, stageId: string, r
  */
 export async function completeStage(ctx: Ctx, projectId: string, stageId: string, completionNote?: string): Promise<LifecycleView> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  if (stage.status !== "in_progress") throw precondition(`“${stage.name}” is ${statusLabel(stage.status).toLowerCase()}; only a stage in progress can be completed.`);
-  const gate = await stageGate(project, stage, "complete");
-  if (!gate.ready) throw gateError(stage, "be completed", gate.blockers);
-  await getDb().transaction(async (tx) => {
-    await moveStage(tx, stage, "completed", { completedAt: new Date(), completionNote: completionNote?.trim() || null, blockedReason: null });
-    await record(ctx, tx, project, "stage.complete", "lifecycle_stage", stage.id, `Completed stage “${stage.name}”`, stageMeta(stage, { from: stage.status, to: "completed" }));
-  });
+  await inLifecycle(ctx, projectId, (scope) => applyComplete(ctx, scope, stageIn(scope, stageId), completionNote));
   return getProjectLifecycle(ctx, projectId);
 }
 
 /** Skip a stage with a recorded reason. Skipping a required stage is an owner decision. */
 export async function skipStage(ctx: Ctx, projectId: string, stageId: string, reason: string): Promise<LifecycleView> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage, stages } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  if (!reason.trim()) throw new AppError("validation_error", "Say why the stage is being skipped.", { reason: ["A reason is required."] });
-  if (stage.isRequired && ctx.role !== "owner") throw forbidden("Only a workspace owner can skip a required stage.");
-  const check = stageStartCheck(orderOf(stages), stage.id);
-  if (!check.allowed) throw precondition(`“${stage.name}” cannot be skipped yet. ${check.reason}`);
-  await getDb().transaction(async (tx) => {
-    await moveStage(tx, stage, "skipped", { skipReason: reason.trim(), completedAt: null, blockedReason: null });
-    await record(ctx, tx, project, "stage.skip", "lifecycle_stage", stage.id, `Skipped stage “${stage.name}”: ${clip(reason.trim(), 160)}`, stageMeta(stage, { from: stage.status, to: "skipped", required: stage.isRequired }));
-  });
+  await inLifecycle(ctx, projectId, (scope) => applySkip(ctx, scope, stageIn(scope, stageId), reason));
   return getProjectLifecycle(ctx, projectId);
 }
 
@@ -631,82 +677,92 @@ export async function skipStage(ctx: Ctx, projectId: string, stageId: string, re
  */
 export async function reopenStage(ctx: Ctx, projectId: string, stageId: string, reason: string): Promise<LifecycleView> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage, stages } = await requireStage(ctx, projectId, stageId);
-  if (lifecycle.status !== "active" && lifecycle.status !== "completed") assertLifecycleActive(lifecycle);
-  if (!reason.trim()) throw new AppError("validation_error", "Say why the stage is being reopened.", { reason: ["A reason is required."] });
-  if (!isStageDone(stage.status)) throw precondition(`“${stage.name}” is ${statusLabel(stage.status).toLowerCase()}; only a completed or skipped stage can be reopened.`);
-  const now = new Date();
-  const why = `Earlier stage “${stage.name}” was reopened: ${clip(reason.trim(), 200)}`;
-  const later = stages.filter((s) => s.sortOrder > stage.sortOrder && (s.status === "in_progress" || s.status === "pending_approval" || s.status === "completed"));
+  await inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle, stages } = scope;
+    const stage = stageIn(scope, stageId);
+    if (lifecycle.status !== "active" && lifecycle.status !== "completed") assertLifecycleActive(lifecycle);
+    const text = required(reason, "reason", "Say why the stage is being reopened.");
+    if (!isStageDone(stage.status)) throw precondition(`“${stage.name}” is ${statusLabel(stage.status).toLowerCase()}; only a completed or skipped stage can be reopened.`);
+    // Reopening puts the stage in progress, so the same ordering applies as to starting it.
+    const check = stageStartCheck(orderOf(stages), stage.id);
+    if (!check.allowed) throw precondition(`“${stage.name}” cannot be reopened yet. ${check.reason}`);
+    const now = new Date();
+    const why = `Earlier stage “${stage.name}” was reopened: ${clip(text, 200)}`;
+    const later = stages.filter((s) => s.sortOrder > stage.sortOrder && (s.status === "in_progress" || s.status === "pending_approval" || s.status === "completed"));
 
-  await getDb().transaction(async (tx) => {
     await moveStage(tx, stage, "in_progress", { completedAt: null, skipReason: null, completionNote: null });
     const voided = await tx
       .update(ap)
-      .set({ invalidatedAt: now, invalidatedReason: `Stage reopened: ${clip(reason.trim(), 200)}` })
+      .set({ invalidatedAt: now, invalidatedReason: `Stage reopened: ${clip(text, 200)}` })
       .where(and(eq(ap.stageInstanceId, stage.id), eq(ap.status, "approved"), isNull(ap.invalidatedAt)))
       .returning({ id: ap.id });
     for (const dependent of later) {
-      const [moved] = await tx.update(st).set({ status: "blocked", blockedReason: `${why} Review this stage once “${stage.name}” is completed again.`, completedAt: null }).where(and(eq(st.id, dependent.id), eq(st.status, dependent.status))).returning({ id: st.id });
-      if (!moved) throw conflict(`“${dependent.name}” was changed by someone else. Reload and try again.`);
+      await tx.update(st).set({ status: "blocked", blockedReason: `${why} Review this stage once “${stage.name}” is completed again.`, completedAt: null }).where(eq(st.id, dependent.id));
       await tx.update(ap).set({ status: "withdrawn", decidedAt: now, decidedBy: ctx.userId, decisionNote: `Withdrawn automatically. ${why}` }).where(and(eq(ap.stageInstanceId, dependent.id), eq(ap.status, "requested")));
       await tx.update(ap).set({ invalidatedAt: now, invalidatedReason: why }).where(and(eq(ap.stageInstanceId, dependent.id), eq(ap.status, "approved"), isNull(ap.invalidatedAt)));
       await record(ctx, tx, project, "stage.block", "lifecycle_stage", dependent.id, `Stage “${dependent.name}” needs review: “${stage.name}” was reopened`, stageMeta(dependent, { from: dependent.status, to: "blocked", cause: stage.id }));
     }
     if (lifecycle.status === "completed") await tx.update(lc).set({ status: "active", completedAt: null }).where(eq(lc.id, lifecycle.id));
-    await record(ctx, tx, project, "stage.reopen", "lifecycle_stage", stage.id, `Reopened stage “${stage.name}”: ${clip(reason.trim(), 160)}`, stageMeta(stage, { from: stage.status, to: "in_progress", approvalsVoided: voided.length, stagesBlocked: later.map((s) => s.id) }));
+    await record(ctx, tx, project, "stage.reopen", "lifecycle_stage", stage.id, `Reopened stage “${stage.name}”: ${clip(text, 160)}`, stageMeta(stage, { from: stage.status, to: "in_progress", approvalsVoided: voided.length, stagesBlocked: later.map((s) => s.id) }));
   });
   return getProjectLifecycle(ctx, projectId);
 }
 
-/** Owner, reviewer, due date and notes — plus an optional status change, which goes through the same transition rules. */
+/**
+ * Owner, reviewer, due date and notes — plus an optional status change, which goes through the same transition
+ * rules. It is all or nothing: if the status change is refused, the field changes are not saved either.
+ */
 export async function updateStage(ctx: Ctx, projectId: string, stageId: string, input: Omit<StageUpdateInput, "dueAt"> & { dueAt?: Date | null }): Promise<LifecycleView> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  const owner = input.ownerId ? await requireMember(ctx, input.ownerId, "ownerId") : null;
-  const reviewer = input.reviewerId ? await requireMember(ctx, input.reviewerId, "reviewerId", { canDecide: true }) : null;
-  const patch: Partial<Stage> = {};
-  const changes: string[] = [];
-  const metadata: Record<string, unknown> = {};
-  if (input.ownerId !== undefined && input.ownerId !== stage.ownerId) {
-    patch.ownerId = input.ownerId;
-    changes.push(owner ? `owner set to ${owner.name}` : "owner cleared");
-    metadata.ownerId = { from: stage.ownerId, to: input.ownerId };
-  }
-  if (input.reviewerId !== undefined && input.reviewerId !== stage.reviewerId) {
-    patch.reviewerId = input.reviewerId;
-    changes.push(reviewer ? `reviewer set to ${reviewer.name}` : "reviewer cleared");
-    metadata.reviewerId = { from: stage.reviewerId, to: input.reviewerId };
-  }
-  if (input.dueAt !== undefined && iso(input.dueAt) !== iso(stage.dueAt)) {
-    patch.dueAt = input.dueAt;
-    changes.push(input.dueAt ? `due date set to ${input.dueAt.toISOString().slice(0, 10)}` : "due date cleared");
-    metadata.dueAt = { from: iso(stage.dueAt), to: iso(input.dueAt) };
-  }
-  if (input.notes !== undefined && input.notes !== stage.notes) {
-    patch.notes = input.notes;
-    changes.push("notes updated");
-  }
-  if (changes.length) {
-    await getDb().transaction(async (tx) => {
+  await inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle } = scope;
+    const stage = stageIn(scope, stageId);
+    assertLifecycleActive(lifecycle);
+    const owner = input.ownerId ? await requireMember(ctx, input.ownerId, "ownerId", {}, tx) : null;
+    const reviewer = input.reviewerId ? await requireMember(ctx, input.reviewerId, "reviewerId", { canDecide: true }, tx) : null;
+    const patch: Partial<Stage> = {};
+    const changes: string[] = [];
+    const metadata: Record<string, unknown> = {};
+    if (input.ownerId !== undefined && input.ownerId !== stage.ownerId) {
+      patch.ownerId = input.ownerId;
+      changes.push(owner ? `owner set to ${owner.name}` : "owner cleared");
+      metadata.ownerId = { from: stage.ownerId, to: input.ownerId };
+    }
+    if (input.reviewerId !== undefined && input.reviewerId !== stage.reviewerId) {
+      // The open request names its reviewer; changing the stage's reviewer underneath it would mislead.
+      if (stage.status === "pending_approval") throw precondition(`“${stage.name}” is waiting for approval. Withdraw the request to change its reviewer.`);
+      patch.reviewerId = input.reviewerId;
+      changes.push(reviewer ? `reviewer set to ${reviewer.name}` : "reviewer cleared");
+      metadata.reviewerId = { from: stage.reviewerId, to: input.reviewerId };
+    }
+    if (input.dueAt !== undefined && iso(input.dueAt) !== iso(stage.dueAt)) {
+      patch.dueAt = input.dueAt;
+      changes.push(input.dueAt ? `due date set to ${input.dueAt.toISOString().slice(0, 10)}` : "due date cleared");
+      metadata.dueAt = { from: iso(stage.dueAt), to: iso(input.dueAt) };
+    }
+    if (input.notes !== undefined && input.notes !== stage.notes) {
+      patch.notes = input.notes;
+      changes.push("notes updated");
+    }
+    if (changes.length) {
       await tx.update(st).set(patch).where(eq(st.id, stage.id));
       await record(ctx, tx, project, "stage.update", "lifecycle_stage", stage.id, `Stage “${stage.name}”: ${changes.join(", ")}`, stageMeta(stage, metadata));
-    });
-  }
-  if (input.status && input.status !== stage.status) {
-    if (input.status === "in_progress") return startStage(ctx, projectId, stageId);
-    if (input.status === "blocked") return blockStage(ctx, projectId, stageId, input.reason ?? "");
-    if (input.status === "skipped") return skipStage(ctx, projectId, stageId, input.reason ?? "");
-    return completeStage(ctx, projectId, stageId, input.reason);
-  }
+    }
+    if (input.status && input.status !== stage.status) {
+      const current = { ...stage, ...patch };
+      if (input.status === "in_progress") await applyStart(ctx, scope, current);
+      else if (input.status === "blocked") await applyBlock(ctx, scope, current, input.reason ?? "");
+      else if (input.status === "skipped") await applySkip(ctx, scope, current, input.reason ?? "");
+      else await applyComplete(ctx, scope, current, input.reason);
+    }
+  });
   return getProjectLifecycle(ctx, projectId);
 }
 
 // ── Checklist ───────────────────────────────────────────────────────────────
-async function requireItem(stage: Stage, itemId: string): Promise<ChecklistItem> {
+async function requireItem(tx: Tx, stage: Stage, itemId: string): Promise<ChecklistItem> {
   if (!UUID.test(itemId)) throw notFound("Checklist item");
-  const [item] = await getDb().select().from(ci).where(and(eq(ci.id, itemId), eq(ci.stageInstanceId, stage.id), eq(ci.workspaceId, stage.workspaceId))).limit(1);
+  const [item] = await tx.select().from(ci).where(and(eq(ci.id, itemId), eq(ci.stageInstanceId, stage.id), eq(ci.workspaceId, stage.workspaceId))).limit(1);
   if (!item) throw notFound("Checklist item");
   return item;
 }
@@ -719,11 +775,12 @@ export async function listChecklistItems(ctx: Ctx, projectId: string, stageId: s
 
 export async function createChecklistItem(ctx: Ctx, projectId: string, stageId: string, input: Omit<ChecklistCreateInput, "dueAt"> & { dueAt?: Date | null }): Promise<{ id: string }> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  assertStageOpen(stage);
-  if (input.assigneeId) await requireMember(ctx, input.assigneeId, "assigneeId");
-  return getDb().transaction(async (tx) => {
+  return inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle } = scope;
+    const stage = stageIn(scope, stageId);
+    assertLifecycleActive(lifecycle);
+    assertStageOpen(stage);
+    if (input.assigneeId) await requireMember(ctx, input.assigneeId, "assigneeId", {}, tx);
     const [last] = await tx.select({ n: sql<number>`coalesce(max(${ci.sortOrder}), 0)::int` }).from(ci).where(eq(ci.stageInstanceId, stage.id));
     const [item] = await tx
       .insert(ci)
@@ -736,72 +793,76 @@ export async function createChecklistItem(ctx: Ctx, projectId: string, stageId: 
 
 export async function updateChecklistItem(ctx: Ctx, projectId: string, stageId: string, itemId: string, input: Omit<ChecklistUpdateInput, "dueAt"> & { dueAt?: Date | null }): Promise<{ id: string; status: ChecklistStatus }> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  assertStageOpen(stage);
-  const item = await requireItem(stage, itemId);
-  if (input.assigneeId) await requireMember(ctx, input.assigneeId, "assigneeId");
-  const patch: Partial<ChecklistItem> = {};
-  const changed: string[] = [];
-  const set = (label: string, value: Partial<ChecklistItem>) => {
-    Object.assign(patch, value);
-    changed.push(label);
-  };
-  if (input.title !== undefined && input.title !== item.title) set("title", { title: input.title });
-  if (input.description !== undefined && input.description !== item.description) set("description", { description: input.description });
-  if (input.assigneeId !== undefined && input.assigneeId !== item.assigneeId) set("assignee", { assigneeId: input.assigneeId });
-  if (input.dueAt !== undefined && iso(input.dueAt) !== iso(item.dueAt)) set("due date", { dueAt: input.dueAt });
-  if (input.notes !== undefined && input.notes !== item.notes) set("notes", { notes: input.notes });
+  return inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle } = scope;
+    const stage = stageIn(scope, stageId);
+    assertLifecycleActive(lifecycle);
+    assertStageOpen(stage);
+    const item = await requireItem(tx, stage, itemId);
+    if (input.assigneeId) await requireMember(ctx, input.assigneeId, "assigneeId", {}, tx);
+    const patch: Partial<ChecklistItem> = {};
+    const changed: string[] = [];
+    const set = (label: string, value: Partial<ChecklistItem>) => {
+      Object.assign(patch, value);
+      changed.push(label);
+    };
+    if (input.title !== undefined && input.title !== item.title) set("title", { title: input.title });
+    if (input.description !== undefined && input.description !== item.description) set("description", { description: input.description });
+    if (input.assigneeId !== undefined && input.assigneeId !== item.assigneeId) set("assignee", { assigneeId: input.assigneeId });
+    if (input.dueAt !== undefined && iso(input.dueAt) !== iso(item.dueAt)) set("due date", { dueAt: input.dueAt });
+    if (input.notes !== undefined && input.notes !== item.notes) set("notes", { notes: input.notes });
 
-  let action = "checklist.update";
-  let summary = `Updated checklist item in “${stage.name}” (${changed.join(", ")}): ${clip(item.title, 120)}`;
-  const to = input.status;
-  if (to && to !== item.status) {
-    if (stage.status === "not_started") throw precondition(`Start “${stage.name}” before working through its checklist.`);
-    const now = new Date();
-    Object.assign(patch, { status: to, statusChangedBy: ctx.userId, statusChangedAt: now, waivedReason: null, completedAt: to === "completed" ? now : null, completedBy: to === "completed" ? ctx.userId : null });
-    const wasSatisfied = item.status === "completed" || item.status === "waived";
-    action = to === "completed" ? "checklist.complete" : wasSatisfied ? "checklist.reopen" : "checklist.update";
-    summary = `${to === "completed" ? "Completed" : wasSatisfied ? `Reopened (was ${item.status})` : `Set to ${statusLabel(to).toLowerCase()}`} checklist item in “${stage.name}”: ${clip(item.title, 120)}`;
-  } else if (!changed.length) {
-    return { id: item.id, status: item.status };
-  }
-  await getDb().transaction(async (tx) => {
+    let action = "checklist.update";
+    let summary = `Updated checklist item in “${stage.name}” (${changed.join(", ")}): ${clip(item.title, 120)}`;
+    const to = input.status;
+    if (to && to !== item.status) {
+      if (stage.status === "not_started") throw precondition(`Start “${stage.name}” before working through its checklist.`);
+      const now = new Date();
+      Object.assign(patch, { status: to, statusChangedBy: ctx.userId, statusChangedAt: now, waivedReason: null, completedAt: to === "completed" ? now : null, completedBy: to === "completed" ? ctx.userId : null });
+      const wasSatisfied = item.status === "completed" || item.status === "waived";
+      action = to === "completed" ? "checklist.complete" : wasSatisfied ? "checklist.reopen" : "checklist.update";
+      summary = `${to === "completed" ? "Completed" : wasSatisfied ? `Reopened (was ${item.status})` : `Set to ${statusLabel(to).toLowerCase()}`} checklist item in “${stage.name}”: ${clip(item.title, 120)}`;
+    } else if (!changed.length) {
+      return { id: item.id, status: item.status };
+    }
     await tx.update(ci).set(patch).where(eq(ci.id, item.id));
     await record(ctx, tx, project, action, "checklist_item", item.id, summary, stageMeta(stage, { itemId: item.id, changed, ...(patch.status ? { from: item.status, to: patch.status } : {}) }));
+    return { id: item.id, status: patch.status ?? item.status };
   });
-  return { id: item.id, status: patch.status ?? item.status };
 }
 
 /** Waive an item with a mandatory reason. The item stays on the checklist, shown as waived, and the waiver is audited. */
 export async function waiveChecklistItem(ctx: Ctx, projectId: string, stageId: string, itemId: string, reason: string): Promise<{ id: string; status: ChecklistStatus }> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  assertStageOpen(stage);
-  const item = await requireItem(stage, itemId);
-  const text = reason.trim();
-  if (!text) throw new AppError("validation_error", "Say why this item is being waived.", { reason: ["A reason is required to waive a checklist item."] });
-  if (stage.status === "not_started") throw precondition(`Start “${stage.name}” before waiving its checklist items.`);
-  if (item.status === "waived") throw precondition("This item is already waived.");
-  await getDb().transaction(async (tx) => {
+  return inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle } = scope;
+    const stage = stageIn(scope, stageId);
+    assertLifecycleActive(lifecycle);
+    assertStageOpen(stage);
+    const item = await requireItem(tx, stage, itemId);
+    const text = reason.trim();
+    if (!text) throw new AppError("validation_error", "Say why this item is being waived.", { reason: ["A reason is required to waive a checklist item."] });
+    if (stage.status === "not_started") throw precondition(`Start “${stage.name}” before waiving its checklist items.`);
+    if (item.status === "waived") throw precondition("This item is already waived.");
     await tx.update(ci).set({ status: "waived", waivedReason: text, statusChangedBy: ctx.userId, statusChangedAt: new Date(), completedAt: null, completedBy: null }).where(eq(ci.id, item.id));
-    await record(ctx, tx, project, "checklist.waive", "checklist_item", item.id, `Waived ${item.isRequired ? "required" : "optional"} checklist item in “${stage.name}”: ${clip(item.title, 100)}`, stageMeta(stage, { itemId: item.id, from: item.status, to: "waived", required: item.isRequired, reason: clip(text) }));
+    // The reason is part of the audit trail: it must outlive the waiver if the item is later reopened.
+    await record(ctx, tx, project, "checklist.waive", "checklist_item", item.id, `Waived ${item.isRequired ? "required" : "optional"} checklist item in “${stage.name}”: ${clip(item.title, 100)} — reason: ${clip(text, 200)}`, stageMeta(stage, { itemId: item.id, from: item.status, to: "waived", required: item.isRequired }));
+    return { id: item.id, status: "waived" as const };
   });
-  return { id: item.id, status: "waived" };
 }
 
 /** Only optional items that were added to this project can be removed. Template items and required items are waived instead. */
 export async function deleteChecklistItem(ctx: Ctx, projectId: string, stageId: string, itemId: string): Promise<void> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  assertStageOpen(stage);
-  const item = await requireItem(stage, itemId);
-  if (item.isRequired || item.origin !== "custom") throw precondition("Required items and items from the template cannot be deleted. Waive the item with a reason instead.");
-  const [linked] = await getDb().select({ id: ev.id }).from(ev).where(eq(ev.checklistItemId, item.id)).limit(1);
-  if (linked) throw precondition("Evidence is attached to this item, so it cannot be deleted. Waive it instead.");
-  await getDb().transaction(async (tx) => {
+  await inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle } = scope;
+    const stage = stageIn(scope, stageId);
+    assertLifecycleActive(lifecycle);
+    assertStageOpen(stage);
+    const item = await requireItem(tx, stage, itemId);
+    if (item.isRequired || item.origin !== "custom") throw precondition("Required items and items from the template cannot be deleted. Waive the item with a reason instead.");
+    const [linked] = await tx.select({ id: ev.id }).from(ev).where(eq(ev.checklistItemId, item.id)).limit(1);
+    if (linked) throw precondition("Evidence is attached to this item, so it cannot be deleted. Waive it instead.");
     await tx.delete(ci).where(eq(ci.id, item.id));
     await record(ctx, tx, project, "checklist.delete", "checklist_item", item.id, `Removed optional checklist item from “${stage.name}”: ${clip(item.title, 120)}`, stageMeta(stage, { itemId: item.id }));
   });
@@ -817,32 +878,33 @@ export async function listStageEvidence(ctx: Ctx, projectId: string, stageId: st
 /** Add a reference: a generated artifact of this project, a safe URL, or a note. Nothing is uploaded or copied. */
 export async function addStageEvidence(ctx: Ctx, projectId: string, stageId: string, input: EvidenceCreateInput): Promise<{ id: string }> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  assertStageOpen(stage);
-  if (input.checklistItemId) await requireItem(stage, input.checklistItemId);
-  if (input.evidenceType === "url") {
-    // Checked again here so an unsafe scheme cannot be stored by a caller that skipped the request schema.
-    const problem = evidenceUrlProblem(input.url ?? "");
-    if (problem) throw new AppError("validation_error", problem, { url: [problem] });
-  }
-  const db = getDb();
-  let artifactId: string | null = null;
-  let artifactRevisionId: string | null = null;
-  if (input.evidenceType === "artifact") {
-    // The artifact must belong to this project, and the revision to that artifact.
-    const a = schema.artifacts;
-    const ar = schema.artifactRevisions;
-    const [artifact] = await db.select({ id: a.id }).from(a).where(and(eq(a.id, input.artifactId!), eq(a.projectId, project.id))).limit(1);
-    if (!artifact) throw notFound("Artifact");
-    const [revision] = input.artifactRevisionId
-      ? await db.select({ id: ar.id }).from(ar).where(and(eq(ar.id, input.artifactRevisionId), eq(ar.artifactId, artifact.id))).limit(1)
-      : await db.select({ id: ar.id }).from(ar).where(eq(ar.artifactId, artifact.id)).orderBy(desc(ar.version)).limit(1);
-    if (!revision) throw notFound("Artifact version");
-    artifactId = artifact.id;
-    artifactRevisionId = revision.id;
-  }
-  return db.transaction(async (tx) => {
+  return inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle } = scope;
+    const stage = stageIn(scope, stageId);
+    assertLifecycleActive(lifecycle);
+    assertStageOpen(stage);
+    if (input.checklistItemId) await requireItem(tx, stage, input.checklistItemId);
+    if (input.evidenceType === "url") {
+      // Checked again here so an unsafe scheme cannot be stored by a caller that skipped the request schema.
+      const problem = evidenceUrlProblem(input.url ?? "");
+      if (problem) throw new AppError("validation_error", problem, { url: [problem] });
+    }
+    let artifactId: string | null = null;
+    let artifactRevisionId: string | null = null;
+    if (input.evidenceType === "artifact") {
+      // The artifact must belong to this project, and the revision to that artifact.
+      const a = schema.artifacts;
+      const ar = schema.artifactRevisions;
+      if (!input.artifactId || !UUID.test(input.artifactId) || (input.artifactRevisionId && !UUID.test(input.artifactRevisionId))) throw notFound("Artifact");
+      const [artifact] = await tx.select({ id: a.id }).from(a).where(and(eq(a.id, input.artifactId), eq(a.projectId, project.id))).limit(1);
+      if (!artifact) throw notFound("Artifact");
+      const [revision] = input.artifactRevisionId
+        ? await tx.select({ id: ar.id }).from(ar).where(and(eq(ar.id, input.artifactRevisionId), eq(ar.artifactId, artifact.id))).limit(1)
+        : await tx.select({ id: ar.id }).from(ar).where(eq(ar.artifactId, artifact.id)).orderBy(desc(ar.version)).limit(1);
+      if (!revision) throw notFound("Artifact version");
+      artifactId = artifact.id;
+      artifactRevisionId = revision.id;
+    }
     const [row] = await tx
       .insert(ev)
       .values({ workspaceId: ctx.workspaceId, stageInstanceId: stage.id, checklistItemId: input.checklistItemId ?? null, artifactId, artifactRevisionId, title: input.title, evidenceType: input.evidenceType, url: input.evidenceType === "url" ? input.url!.trim() : null, note: input.note?.trim() || null, createdBy: ctx.userId })
@@ -855,35 +917,41 @@ export async function addStageEvidence(ctx: Ctx, projectId: string, stageId: str
 /** Evidence is never edited or deleted. A wrong reference is marked superseded, with who, when and why. */
 export async function supersedeStageEvidence(ctx: Ctx, projectId: string, stageId: string, evidenceId: string, reason: string): Promise<{ id: string }> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  assertStageOpen(stage);
-  if (!UUID.test(evidenceId)) throw notFound("Evidence");
-  const [row] = await getDb().select().from(ev).where(and(eq(ev.id, evidenceId), eq(ev.stageInstanceId, stage.id), eq(ev.workspaceId, ctx.workspaceId))).limit(1);
-  if (!row) throw notFound("Evidence");
-  if (row.supersededAt) throw precondition("This evidence is already marked superseded.");
-  await getDb().transaction(async (tx) => {
-    await tx.update(ev).set({ supersededAt: new Date(), supersededBy: ctx.userId, supersededReason: reason.trim() }).where(and(eq(ev.id, row.id), isNull(ev.supersededAt)));
-    await record(ctx, tx, project, "evidence.supersede", "stage_evidence", row.id, `Marked evidence superseded in “${stage.name}”: ${clip(row.title, 120)}`, stageMeta(stage, { evidenceId: row.id, reason: clip(reason.trim()) }));
+  return inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle } = scope;
+    const stage = stageIn(scope, stageId);
+    assertLifecycleActive(lifecycle);
+    assertStageOpen(stage);
+    if (!UUID.test(evidenceId)) throw notFound("Evidence");
+    const [row] = await tx.select().from(ev).where(and(eq(ev.id, evidenceId), eq(ev.stageInstanceId, stage.id), eq(ev.workspaceId, ctx.workspaceId))).limit(1);
+    if (!row) throw notFound("Evidence");
+    if (row.supersededAt) throw precondition("This evidence is already marked superseded.");
+    const text = required(reason, "reason", "Say why this evidence is being superseded.");
+    // The reason stays on the evidence row for good, so the audit event only needs to point at it.
+    await tx.update(ev).set({ supersededAt: new Date(), supersededBy: ctx.userId, supersededReason: text }).where(eq(ev.id, row.id));
+    await record(ctx, tx, project, "evidence.supersede", "stage_evidence", row.id, `Marked evidence superseded in “${stage.name}”: ${clip(row.title, 120)}`, stageMeta(stage, { evidenceId: row.id }));
+    return { id: row.id };
   });
-  return { id: row.id };
 }
 
 // ── Approvals ───────────────────────────────────────────────────────────────
 /** Ask the reviewer to approve the stage gate. Allowed only when every other gate condition already holds. */
 export async function requestStageApproval(ctx: Ctx, projectId: string, stageId: string, input: { reviewerId?: string; note: string }): Promise<{ id: string }> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  assertLifecycleActive(lifecycle);
-  if (!stage.requiresApproval) throw precondition(`“${stage.name}” has no approval gate. Complete the stage directly.`);
-  if (stage.status !== "in_progress") throw precondition(`“${stage.name}” is ${statusLabel(stage.status).toLowerCase()}; approval can be requested for a stage in progress.`);
-  const reviewerId = input.reviewerId ?? stage.reviewerId;
-  if (!reviewerId) throw new AppError("validation_error", "Assign a reviewer before requesting approval.", { reviewerId: ["Choose who reviews this stage gate."] });
-  const reviewer = await requireMember(ctx, reviewerId, "reviewerId", { canDecide: true });
-  const gate = await stageGate(project, stage, "request");
-  if (!gate.ready) throw gateError(stage, "be sent for approval", gate.blockers);
+  return inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle } = scope;
+    const stage = stageIn(scope, stageId);
+    assertLifecycleActive(lifecycle);
+    if (!stage.requiresApproval) throw precondition(`“${stage.name}” has no approval gate. Complete the stage directly.`);
+    if (stage.status !== "in_progress") throw precondition(`“${stage.name}” is ${statusLabel(stage.status).toLowerCase()}; approval can be requested for a stage in progress.`);
+    const reviewerId = input.reviewerId ?? stage.reviewerId;
+    if (!reviewerId) throw new AppError("validation_error", "Assign a reviewer before requesting approval.", { reviewerId: ["Choose who reviews this stage gate."] });
+    const reviewer = await requireMember(ctx, reviewerId, "reviewerId", { canDecide: true }, tx);
+    // An owner may review their own request (a one-person workspace has nobody else); an editor may not.
+    if (reviewer.id === ctx.userId && ctx.role !== "owner") throw new AppError("validation_error", "Choose someone else to review your request.", { reviewerId: ["You cannot review a request you make yourself. Choose another owner or editor."] });
+    const gate = await stageGate(scope, stage, "request");
+    if (!gate.ready) throw gateError(stage, "be sent for approval", gate.blockers);
 
-  return getDb().transaction(async (tx) => {
     await moveStage(tx, stage, "pending_approval", { reviewerId: reviewer.id });
     const [approval] = await tx.insert(ap).values({ workspaceId: ctx.workspaceId, stageInstanceId: stage.id, status: "requested", requestedBy: ctx.userId, reviewerId: reviewer.id, requestNote: input.note }).returning({ id: ap.id });
     await record(ctx, tx, project, "approval.request", "stage_approval", approval!.id, `Requested approval of “${stage.name}” from ${reviewer.name}`, stageMeta(stage, { approvalId: approval!.id, reviewerId: reviewer.id, from: stage.status, to: "pending_approval" }));
@@ -898,35 +966,36 @@ export async function requestStageApproval(ctx: Ctx, projectId: string, stageId:
  */
 export async function decideStageApproval(ctx: Ctx, projectId: string, stageId: string, approvalId: string, decision: "approve" | "reject" | "withdraw", note: string): Promise<{ id: string; status: ApprovalStatus; stageStatus: StageStatus }> {
   assertCanEdit(ctx);
-  const { project, lifecycle, stage } = await requireStage(ctx, projectId, stageId);
-  if (!UUID.test(approvalId)) throw notFound("Approval");
-  const [approval] = await getDb().select().from(ap).where(and(eq(ap.id, approvalId), eq(ap.stageInstanceId, stage.id), eq(ap.workspaceId, ctx.workspaceId))).limit(1);
-  if (!approval) throw notFound("Approval");
-  assertLifecycleActive(lifecycle);
-  if (approval.status !== "requested") throw precondition(`This request was already ${approval.status}. Request approval again to get a new decision.`);
-  if (decision === "withdraw") {
-    if (approval.requestedBy !== ctx.userId && ctx.role !== "owner") throw forbidden("Only the person who requested this approval, or a workspace owner, can withdraw it.");
-  } else if (approval.reviewerId !== ctx.userId && ctx.role !== "owner") {
-    throw forbidden("Only the assigned reviewer or a workspace owner can decide this approval.");
-  }
-  if (decision === "reject" && !note.trim()) throw new AppError("validation_error", "Tell the requester what has to change.", { note: ["A note is required to reject."] });
-  if (decision === "approve") {
-    const gate = await stageGate(project, stage, "request");
-    if (!gate.ready) throw gateError(stage, "be approved", gate.blockers);
-  }
+  return inLifecycle(ctx, projectId, async (scope) => {
+    const { tx, project, lifecycle } = scope;
+    const stage = stageIn(scope, stageId);
+    if (!UUID.test(approvalId)) throw notFound("Approval");
+    const [approval] = await tx.select().from(ap).where(and(eq(ap.id, approvalId), eq(ap.stageInstanceId, stage.id), eq(ap.workspaceId, ctx.workspaceId))).limit(1);
+    if (!approval) throw notFound("Approval");
+    assertLifecycleActive(lifecycle);
+    if (approval.status !== "requested") throw precondition(`This request was already ${approval.status}. Request approval again to get a new decision.`);
+    if (decision === "withdraw") {
+      if (approval.requestedBy !== ctx.userId && ctx.role !== "owner") throw forbidden("Only the person who requested this approval, or a workspace owner, can withdraw it.");
+    } else {
+      if (approval.reviewerId !== ctx.userId && ctx.role !== "owner") throw forbidden("Only the assigned reviewer or a workspace owner can decide this approval.");
+      if (approval.requestedBy === ctx.userId && ctx.role !== "owner") throw forbidden("You requested this approval. Another reviewer or a workspace owner has to decide it.");
+    }
+    if (decision === "reject" && !note.trim()) throw new AppError("validation_error", "Tell the requester what has to change.", { note: ["A note is required to reject."] });
+    if (decision === "approve") {
+      const gate = await stageGate(scope, stage, "request");
+      if (!gate.ready) throw gateError(stage, "be approved", gate.blockers);
+    }
 
-  const status: ApprovalStatus = decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "withdrawn";
-  const stageStatus: StageStatus = decision === "approve" ? "completed" : "in_progress";
-  const now = new Date();
-  await getDb().transaction(async (tx) => {
-    const [decided] = await tx.update(ap).set({ status, decidedBy: ctx.userId, decidedAt: now, decisionNote: note.trim() || null }).where(and(eq(ap.id, approval.id), eq(ap.status, "requested"))).returning({ id: ap.id });
-    if (!decided) throw conflict("This request was decided by someone else. Reload to see the result.");
+    const status: ApprovalStatus = decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "withdrawn";
+    const stageStatus: StageStatus = decision === "approve" ? "completed" : "in_progress";
+    const now = new Date();
+    await tx.update(ap).set({ status, decidedBy: ctx.userId, decidedAt: now, decisionNote: note.trim() || null }).where(eq(ap.id, approval.id));
     await moveStage(tx, stage, stageStatus, decision === "approve" ? { completedAt: now, completionNote: note.trim() || null, blockedReason: null } : {});
     const verb = decision === "approve" ? "Approved" : decision === "reject" ? "Rejected" : "Withdrew";
     await record(ctx, tx, project, `approval.${decision}`, "stage_approval", approval.id, `${verb} the approval request for “${stage.name}”${decision === "reject" ? `: ${clip(note.trim(), 160)}` : ""}`, stageMeta(stage, { approvalId: approval.id, from: "requested", to: status }));
     if (decision === "approve") await record(ctx, tx, project, "stage.complete", "lifecycle_stage", stage.id, `Completed stage “${stage.name}” on approval`, stageMeta(stage, { from: stage.status, to: "completed", approvalId: approval.id }));
+    return { id: approval.id, status, stageStatus };
   });
-  return { id: approval.id, status, stageStatus };
 }
 
 // ── Milestones ──────────────────────────────────────────────────────────────
@@ -1226,9 +1295,10 @@ export async function getLifecyclePortfolioStats(ctx: Ctx, now: Date = new Date(
   for (const row of live) {
     const stage = row.lifecycle!.currentStage;
     if (!stage) continue;
-    const entry = byStage.get(stage.name) ?? { stageKey: stage.stageKey, name: stage.name, count: 0, order: stage.sortOrder };
+    const key = `${stage.stageKey}\u0000${stage.name}`;
+    const entry = byStage.get(key) ?? { stageKey: stage.stageKey, name: stage.name, count: 0, order: stage.sortOrder };
     entry.count += 1;
-    byStage.set(stage.name, entry);
+    byStage.set(key, entry);
   }
   const attention = live
     .map((row) => {

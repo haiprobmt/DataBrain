@@ -485,7 +485,7 @@ export function computeProgress(stages: StageProgressInput[], checklist: (Checkl
     currentStageId: current?.id ?? null,
     blockedStageIds: ordered.filter((s) => s.status === "blocked").map((s) => s.id),
     pendingApprovalStageIds: ordered.filter((s) => s.status === "pending_approval").map((s) => s.id),
-    overdueStageIds: ordered.filter((s) => s.status !== "not_started" && isOverdue(s.dueAt, isStageDone(s.status), now)).map((s) => s.id),
+    overdueStageIds: ordered.filter((s) => isOverdue(s.dueAt, isStageDone(s.status), now)).map((s) => s.id),
     checklist: {
       total: checklist.length,
       satisfied: checklist.filter(isChecklistItemSatisfied).length,

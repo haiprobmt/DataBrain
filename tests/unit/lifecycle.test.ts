@@ -275,7 +275,7 @@ describe("progress", () => {
     const list = stages("completed", "in_progress", "not_started");
     list[0]!.dueAt = new Date("2026-06-01T00:00:00Z"); // done: not overdue
     list[1]!.dueAt = new Date("2026-06-10T00:00:00Z"); // open and past due
-    list[2]!.dueAt = new Date("2026-06-10T00:00:00Z"); // not started: not flagged
+    list[2]!.dueAt = new Date("2026-06-10T00:00:00Z"); // not started, but its date has passed: late all the same
     const checklist = [
       { ...item("a", { status: "completed" }), stageId: "initiate" },
       { ...item("b"), stageId: "discover" },
@@ -283,7 +283,7 @@ describe("progress", () => {
       { ...item("d", { status: "waived", waivedReason: "ok" }), stageId: "discover" },
     ];
     const p = computeProgress(list, checklist, NOW);
-    expect(p.overdueStageIds).toEqual(["discover"]);
+    expect(p.overdueStageIds).toEqual(["discover", "design"]);
     expect(p.checklist).toEqual({ total: 4, satisfied: 2, outstandingRequired: 1 });
   });
 
@@ -334,7 +334,16 @@ describe("due dates", () => {
     expect(milestoneCreateSchema.parse({ name: "UAT sign-off", dueAt: "2026-09-30" }).dueAt?.toISOString()).toBe("2026-09-30T00:00:00.000Z");
     expect(milestoneCreateSchema.parse({ name: "UAT sign-off" }).dueAt).toBeNull();
     expect(stageUpdateSchema.parse({ dueAt: null }).dueAt).toBeNull();
-    for (const bad of ["30/09/2026", "2026-13-01", "1999-01-01", "soon"]) expect(milestoneCreateSchema.safeParse({ name: "UAT sign-off", dueAt: bad }).success, bad).toBe(false);
+    // An impossible day is rejected rather than rolled over into the next month.
+    for (const bad of ["30/09/2026", "2026-13-01", "2026-02-31", "2026-04-31", "1999-01-01", "soon"]) expect(milestoneCreateSchema.safeParse({ name: "UAT sign-off", dueAt: bad }).success, bad).toBe(false);
+    expect(milestoneCreateSchema.parse({ name: "Leap day", dueAt: "2028-02-29" }).dueAt?.toISOString()).toBe("2028-02-29T00:00:00.000Z");
+  });
+
+  it("rejects text the database cannot store", () => {
+    expect(milestoneCreateSchema.safeParse({ name: "Go\u0000live" }).success).toBe(false);
+    expect(stageUpdateSchema.safeParse({ notes: "ok\u0000" }).success).toBe(false);
+    expect(evidenceCreateSchema.safeParse({ evidenceType: "note", title: "Sign-off", note: "a\u0000b" }).success).toBe(false);
+    expect(checklistWaiveSchema.safeParse({ reason: "Not\u0000needed" }).success).toBe(false);
   });
 });
 

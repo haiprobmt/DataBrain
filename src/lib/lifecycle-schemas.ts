@@ -10,7 +10,11 @@ import {
   RISK_STATUSES,
 } from "./lifecycle";
 
-const trimmed = (max: number) => z.string().trim().max(max);
+/** PostgreSQL text cannot hold a NUL character; reject it here rather than fail in the database. */
+const NO_NUL = "This text contains a character that cannot be stored.";
+const noNul = (value: string) => !value.includes("\u0000");
+const trimmed = (max: number) => z.string().trim().max(max).refine(noNul, NO_NUL);
+const freeText = (max: number) => z.string().max(max).refine(noNul, NO_NUL);
 const uuid = z.string().uuid();
 const nullableUuid = uuid.nullable();
 
@@ -20,7 +24,9 @@ const dateInput = z
   .transform((value, ctx) => {
     const date = new Date(value.length === 10 ? `${value}T00:00:00Z` : value);
     const year = date.getUTCFullYear();
-    if (Number.isNaN(date.getTime()) || year < 2000 || year > 2100) {
+    // `new Date` rolls an impossible day over (31 February becomes 3 March); a calendar day must survive the round trip.
+    const rolledOver = value.length === 10 && !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) !== value;
+    if (Number.isNaN(date.getTime()) || rolledOver || year < 2000 || year > 2100) {
       ctx.addIssue({ code: "custom", message: "Enter a valid date between 2000 and 2100." });
       return z.NEVER;
     }
@@ -97,7 +103,7 @@ export const stageUpdateSchema = z
     ownerId: nullableUuid.optional(),
     reviewerId: nullableUuid.optional(),
     dueAt: dateInput.optional(),
-    notes: z.string().max(4000).optional(),
+    notes: freeText(4000).optional(),
     /** Optional status change; validated against the transition rules on the server. */
     status: z.enum(["in_progress", "blocked", "completed", "skipped"]).optional(),
     reason: trimmed(1000).optional(),
@@ -127,7 +133,7 @@ export const checklistUpdateSchema = z
     status: z.enum(["pending", "in_progress", "completed"]).optional(),
     assigneeId: nullableUuid.optional(),
     dueAt: dateInput.optional(),
-    notes: z.string().max(4000).optional(),
+    notes: freeText(4000).optional(),
   })
   .refine((v) => Object.values(v).some((x) => x !== undefined), "Nothing to update.");
 
@@ -140,8 +146,8 @@ export const evidenceCreateSchema = z
     checklistItemId: nullableUuid.optional(),
     artifactId: uuid.optional(),
     artifactRevisionId: uuid.optional(),
-    url: z.string().trim().optional(),
-    note: z.string().trim().max(4000).optional(),
+    url: trimmed(4000).optional(),
+    note: trimmed(4000).optional(),
   })
   .superRefine((v, ctx) => {
     if (v.evidenceType === "artifact" && !v.artifactId) ctx.addIssue({ code: "custom", message: "Choose a generated artifact.", path: ["artifactId"] });

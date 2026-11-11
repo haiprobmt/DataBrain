@@ -315,7 +315,10 @@ describe("project lifecycle", () => {
     expect(events.map((e) => e.action)).toEqual(["lifecycle.checklist.waive", "lifecycle.checklist.reopen", "lifecycle.checklist.complete"]);
     const [waiver] = await getDb().select().from(schema.auditEvents).where(and(eq(schema.auditEvents.action, "lifecycle.checklist.waive"), eq(schema.auditEvents.projectId, projectId)));
     expect(waiver).toMatchObject({ actorId: carol.userId, entityType: "checklist_item", entityId: second!.id });
-    expect(waiver!.metadata).toMatchObject({ required: true, reason: "Sponsor is already named in the programme charter.", stageId: stage.id });
+    // The reason is in the trail (it must outlive the waiver); metadata holds IDs and state changes only.
+    expect(waiver!.summary).toContain("reason: Sponsor is already named in the programme charter.");
+    expect(waiver!.metadata).toMatchObject({ required: true, from: "pending", to: "waived", stageId: stage.id, itemId: second!.id });
+    expect(waiver!.metadata).not.toHaveProperty("reason");
 
     // Required and template items cannot be deleted; only optional items added to the project can.
     await expectError(lifecycle.deleteChecklistItem(alice, projectId, stage.id, third!.id), "precondition_failed", /Waive/);
@@ -528,6 +531,8 @@ describe("project lifecycle", () => {
     current = await view(alice, projectId);
     expect(current.progress).toMatchObject({ percent: 100, requiredStagesDone: 7, currentStageId: improve.id });
     expect(current.lifecycle!.status).toBe("active");
+    // The optional stage never holds Operate back, but the lifecycle cannot be closed over a stage that is under way.
+    await expectError(lifecycle.updateLifecycle(alice, projectId, { status: "completed" }), "precondition_failed", /Finish or skip “Improve & Retire”/);
     // An editor may skip the optional stage; only an owner may skip a required one.
     await lifecycle.skipStage(carol, projectId, improve.id, "No retirement planned this year.");
     expect((await stageOf(alice, projectId, "improve_retire"))).toMatchObject({ status: "skipped", skipReason: "No retirement planned this year." });
@@ -895,3 +900,178 @@ describe("project lifecycle", () => {
     expect(mission.every((e) => e.action.startsWith("lifecycle."))).toBe(true);
   });
 });
+
+describe("lifecycle consistency", () => {
+  const settle = async (calls: (() => Promise<unknown>)[]) => {
+    const results = await Promise.allSettled(calls.map((call) => call()));
+    // A refused request is a clean application error, never a raw database failure.
+    for (const r of results) if (r.status === "rejected") expect(r.reason, String(r.reason)).toBeInstanceOf(AppError);
+    return results;
+  };
+  const start = async (name: string, templateId?: string) => {
+    const project = await projects.createProject(alice, { name, description: "", context: "" });
+    await lifecycle.initializeProjectLifecycle(alice, project.id, templateId);
+    return project.id;
+  };
+  const plain = (stageKey: string, isRequired = true) => ({ stageKey, name: stageKey.toUpperCase(), description: "", isRequired, requiresApproval: false, defaultDurationDays: null, readinessRules: [], checklist: [] });
+  let simpleTemplateId: string;
+
+  beforeAll(async () => {
+    simpleTemplateId = (await templates.createLifecycleTemplate(alice, { name: "Ungated three-step", description: "", stages: [plain("a"), plain("b"), plain("c", false)] })).id;
+  });
+
+  it("does not let a checklist change slip past a gate that is being requested or decided at the same moment", async () => {
+    const openRequired = (v: Awaited<ReturnType<typeof view>>) => v.stages[0]!.checklist.filter((i) => i.isRequired && i.status !== "completed" && i.status !== "waived").length;
+    for (let round = 0; round < 6; round += 1) {
+      const id = await start(`Gate race ${round}`);
+      const stage = await completeChecklist(alice, id, "initiate");
+      const item = stage.checklist[round % stage.checklist.length]!;
+      await settle([
+        () => lifecycle.requestStageApproval(carol, id, stage.id, { reviewerId: dave.userId, note: "Racing request." }),
+        () => lifecycle.updateChecklistItem(alice, id, stage.id, item.id, { status: "pending" }),
+      ]);
+      let after = await view(alice, id);
+      // Either the request won and the checklist is frozen complete, or the item was reopened first and no request exists.
+      if (after.stages[0]!.status === "pending_approval") expect(openRequired(after), `round ${round}`).toBe(0);
+      else expect(after.stages[0]!.approvals, `round ${round}`).toHaveLength(0);
+
+      if (after.stages[0]!.status !== "pending_approval") {
+        await lifecycle.updateChecklistItem(alice, id, stage.id, item.id, { status: "completed" });
+        await lifecycle.requestStageApproval(carol, id, stage.id, { reviewerId: dave.userId, note: "Request." });
+      }
+      const approval = (await view(alice, id)).stages[0]!.approvals[0]!;
+      // The checklist is frozen during review, so a concurrent reopen is refused and the approval stands on a complete checklist.
+      await settle([
+        () => lifecycle.decideStageApproval(dave, id, stage.id, approval.id, "approve", ""),
+        () => lifecycle.updateChecklistItem(alice, id, stage.id, item.id, { status: "pending" }),
+      ]);
+      after = await view(alice, id);
+      expect(after.stages[0]!.status, `round ${round}`).toBe("completed");
+      expect(openRequired(after), `round ${round}`).toBe(0);
+    }
+  });
+
+  it("keeps stage order when a stage is started while the one before it is reopened", async () => {
+    for (let round = 0; round < 6; round += 1) {
+      const id = await start(`Order race ${round}`, simpleTemplateId);
+      const [a, b] = (await view(alice, id)).stages;
+      await lifecycle.completeStage(alice, id, a!.id);
+      await settle([() => lifecycle.startStage(alice, id, b!.id), () => lifecycle.reopenStage(alice, id, a!.id, "Rework.")]);
+      const after = (await view(alice, id)).stages.map((s) => s.status);
+      // Start-then-reopen holds B for review; reopen-then-start refuses the start. B is never in progress beside an open A.
+      expect(["blocked", "not_started"], `round ${round}: ${after.join(",")}`).toContain(after[1]);
+      expect(after[0]).toBe("in_progress");
+    }
+  });
+
+  it("never leaves a lifecycle completed with a required stage open", async () => {
+    for (let round = 0; round < 6; round += 1) {
+      const id = await start(`Completion race ${round}`, simpleTemplateId);
+      const [a, b] = (await view(alice, id)).stages;
+      await lifecycle.completeStage(alice, id, a!.id);
+      await lifecycle.startStage(alice, id, b!.id);
+      await lifecycle.completeStage(alice, id, b!.id);
+      await settle([() => lifecycle.updateLifecycle(alice, id, { status: "completed" }), () => lifecycle.reopenStage(alice, id, b!.id, "Rework.")]);
+      const after = await view(alice, id);
+      expect(after.stages[1]!.status).toBe("in_progress");
+      expect(after.lifecycle!.status, `round ${round}`).toBe("active");
+      expect(after.lifecycle!.completedAt).toBeNull();
+    }
+  });
+
+  it("applies stage order to reopening a skipped stage", async () => {
+    const id = await start("Reopen a skipped stage", simpleTemplateId);
+    const [a, b] = (await view(alice, id)).stages;
+    await lifecycle.completeStage(alice, id, a!.id);
+    await lifecycle.skipStage(alice, id, b!.id, "Covered elsewhere.");
+    await lifecycle.reopenStage(carol, id, a!.id, "Rework.");
+    // B was skipped, so the cascade left it alone; it still cannot come back while A is open.
+    expect((await view(alice, id)).stages.map((s) => s.status)).toEqual(["in_progress", "skipped", "not_started"]);
+    await expectError(lifecycle.reopenStage(carol, id, b!.id, "Bring it back."), "precondition_failed", /cannot be reopened yet\. Complete or skip “A” first/);
+    await lifecycle.completeStage(alice, id, a!.id);
+    const reopened = await lifecycle.reopenStage(carol, id, b!.id, "Bring it back.");
+    expect(reopened.stages.map((s) => s.status)).toEqual(["completed", "in_progress", "not_started"]);
+  });
+
+  it("saves stage details and a status change together or not at all", async () => {
+    const id = await start("Atomic stage update");
+    const stage = await stageOf(alice, id, "initiate");
+    await expectError(lifecycle.updateStage(alice, id, stage.id, { reviewerId: dave.userId, notes: "Should not be saved.", dueAt: new Date("2031-01-01T00:00:00Z"), status: "completed" }), "precondition_failed");
+    const after = await stageOf(alice, id, "initiate");
+    expect(after).toMatchObject({ reviewer: null, notes: "", dueAt: null, status: "in_progress" });
+    expect(await lifecycle.stageActivity(alice, id, stage.id)).toEqual([]);
+
+    const blocked = await lifecycle.updateStage(alice, id, stage.id, { ownerId: carol.userId, status: "blocked", reason: "Waiting for the sponsor." });
+    expect(blocked.stages[0]).toMatchObject({ status: "blocked", blockedReason: "Waiting for the sponsor.", owner: { id: carol.userId } });
+  });
+
+  it("does not let an editor review their own request, or the reviewer change under an open request", async () => {
+    const id = await start("Self review");
+    const stage = await completeChecklist(alice, id, "initiate");
+    const self = await expectError(lifecycle.requestStageApproval(carol, id, stage.id, { reviewerId: carol.userId, note: "I will review this myself." }), "validation_error", /someone else/);
+    expect(self.fieldErrors?.reviewerId).toBeDefined();
+    await lifecycle.updateStage(alice, id, stage.id, { reviewerId: carol.userId });
+    await expectError(lifecycle.requestStageApproval(carol, id, stage.id, { note: "The stage's reviewer is me." }), "validation_error");
+    expect((await stageOf(alice, id, "initiate")).status).toBe("in_progress");
+
+    const approval = await lifecycle.requestStageApproval(carol, id, stage.id, { reviewerId: dave.userId, note: "Dave reviews." });
+    await expectError(lifecycle.updateStage(alice, id, stage.id, { reviewerId: carol.userId }), "precondition_failed", /Withdraw the request to change its reviewer/);
+    expect((await stageOf(alice, id, "initiate")).approvals[0]!.reviewer?.id).toBe(dave.userId);
+    // An owner in a one-person workspace has nobody else, so an owner may decide their own request.
+    await lifecycle.decideStageApproval(carol, id, stage.id, approval.id, "withdraw", "");
+    const own = await lifecycle.requestStageApproval(alice, id, stage.id, { reviewerId: alice.userId, note: "Owner reviews." });
+    expect((await lifecycle.decideStageApproval(alice, id, stage.id, own.id, "approve", "")).stageStatus).toBe("completed");
+  });
+
+  it("keeps exactly one active default template when changes race", async () => {
+    const other = await templates.createLifecycleTemplate(alice, { name: "Racing default", description: "" });
+    const [builtIn] = (await templates.listLifecycleTemplates(alice)).filter((t) => t.builtIn);
+    for (let round = 0; round < 6; round += 1) {
+      await settle([
+        () => templates.setDefaultLifecycleTemplate(alice, other.id),
+        () => templates.setLifecycleTemplateActive(carol, other.id, false),
+        () => templates.setDefaultLifecycleTemplate(alice, round % 2 ? builtIn!.id : other.id),
+      ]);
+      const list = await templates.listLifecycleTemplates(alice);
+      expect(list.filter((t) => t.isDefault), `round ${round}`).toHaveLength(1);
+      expect(list.filter((t) => t.isDefault && t.isActive), `round ${round}`).toHaveLength(1);
+      await templates.setDefaultLifecycleTemplate(alice, builtIn!.id);
+      await templates.setLifecycleTemplateActive(alice, other.id, true);
+    }
+    const names = await settle(Array.from({ length: 4 }, () => () => templates.createLifecycleTemplate(carol, { name: "Same name at once", description: "" })));
+    expect(names.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    for (const r of names) if (r.status === "rejected") expect((r.reason as AppError).code).toBe("conflict");
+  });
+
+  it("copies one consistent template version when the template is edited while a lifecycle starts", async () => {
+    const template = await templates.createLifecycleTemplate(alice, { name: "Edited during start", description: "", stages: [plain("a"), plain("b")] });
+    let version = template.version;
+    for (let round = 0; round < 6; round += 1) {
+      const project = await projects.createProject(alice, { name: `Start during edit ${round}`, description: "", context: "" });
+      const stages = round % 2 ? [plain("a"), plain("b")] : [plain("x"), plain("y"), plain("z")];
+      await settle([
+        () => lifecycle.initializeProjectLifecycle(alice, project.id, template.id),
+        () => templates.updateLifecycleTemplate(alice, template.id, { name: template.name, description: "", stages, expectedVersion: version }),
+      ]);
+      version += 1;
+      const started = await view(alice, project.id);
+      // Whichever came first, the lifecycle holds the stages of exactly the version it recorded.
+      expect(started.lifecycle, `round ${round}`).not.toBeNull();
+      const expected = started.lifecycle!.templateVersion === version ? stages.length : round === 0 ? 2 : round % 2 ? 3 : 2;
+      expect(started.stages, `round ${round}: v${started.lifecycle!.templateVersion}`).toHaveLength(expected);
+    }
+  });
+
+  it("flags a stage whose due date has passed in every place it is counted", async () => {
+    const id = await start("Late before it starts");
+    const discover = await stageOf(alice, id, "discover");
+    const after = await lifecycle.updateStage(alice, id, discover.id, { dueAt: new Date("2020-06-01T00:00:00Z") });
+    expect(after.stages[1]).toMatchObject({ status: "not_started", overdue: true });
+    expect(after.progress!.overdueStageIds).toEqual([discover.id]);
+    const row = (await lifecycle.getPortfolio(alice)).rows.find((r) => r.project.id === id)!;
+    expect(row.lifecycle!.overdueStages).toBe(1);
+    expect(row.overdue).toBe(true);
+    expect((await lifecycle.getLifecyclePortfolioStats(alice)).attention.find((a) => a.projectId === id)?.reasons.map((r) => r.text)).toEqual(["1 overdue stage"]);
+  });
+});
+

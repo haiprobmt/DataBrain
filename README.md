@@ -135,14 +135,16 @@ DATABRAIN_NEW_PASSWORD="a-long-password" npm run user:create -- you@example.com 
 
 ## Checks run on 2026-11-11
 
+Run after the lifecycle release, in this order, against PostgreSQL 16 and Chromium.
+
 | Check | Result |
 |---|---|
 | `npm run lint` | Clean |
 | `npm run typecheck` | Clean |
-| `npm run test:unit` | 29 passed |
-| `npm run test:integration` | 23 passed |
+| `npm run test:unit` | 63 passed (34 of them lifecycle rules) |
+| `npm run test:integration` | 59 passed (23 existing, 36 lifecycle, including race tests for gates, stage order and templates) |
 | `npm run build` | Succeeded |
-| `npm run test:e2e` | 14 passed, including an axe scan of 14 pages and overflow checks at 820 px and 390 px |
+| `npm run test:e2e` | 31 passed: the 14 existing tests and a 17-test lifecycle journey, including a viewer, a second workspace, overflow checks at 820 px and 390 px and an axe scan of the lifecycle pages and two dialogs |
 
 ### Not verified
 
@@ -164,7 +166,7 @@ tests              unit / integration / e2e
 
 Every service function takes a request context and scopes its queries to that workspace; a record in another workspace is reported as not found. Provider interfaces (`LLMProvider`, `EmbeddingProvider`, `Reranker`, `DocumentExtractor`, `ObjectStorage`, `DeploymentAdapter`, `SourceConnector`) are in `src/server/providers/types.ts`. `LLM_PROVIDER` accepts `local` or `anthropic`; the other providers are local only. Naming a provider that has no implementation is a configuration error — the app does not fall back to a local stand-in.
 
-The lifecycle follows the same shape. `src/lib/lifecycle.ts` holds the built-in template, the stage transition matrix, the readiness evaluator, progress, risk score and overdue rules as pure functions; `src/server/services/lifecycle.ts` and `lifecycle-templates.ts` load the facts, enforce roles and parent/workspace checks, and write inside transactions; the routes under `src/app/api/projects/[projectId]/lifecycle`, `…/milestones`, `…/risks` and `src/app/api/lifecycle-templates` only validate and delegate. A project copies its template's stages and checklist when the lifecycle starts, so editing a template (which bumps its version) never changes a running lifecycle. Progress and risk scores are computed on every read and are not stored.
+The lifecycle follows the same shape. `src/lib/lifecycle.ts` holds the built-in template, the stage transition matrix, the readiness evaluator, progress, risk score and overdue rules as pure functions; `src/server/services/lifecycle.ts` and `lifecycle-templates.ts` load the facts, enforce roles and parent/workspace checks, and write inside transactions; the routes under `src/app/api/projects/[projectId]/lifecycle`, `…/milestones`, `…/risks` and `src/app/api/lifecycle-templates` only validate and delegate. Every change to a lifecycle runs in one transaction that first locks that project's lifecycle row, so the state a gate or ordering rule was checked against is the state the change is applied to; template changes are serialised per workspace the same way. A project copies its template's stages and checklist when the lifecycle starts, so editing a template (which bumps its version) never changes a running lifecycle. Progress and risk scores are computed on every read and are not stored.
 
 Security controls in place: signed HTTP-only session cookie, scrypt password hashes, role checks (owner / editor / viewer), same-origin check on state-changing requests, 2 MB body limit, per-user rate limit, login throttling, Zod validation at every API boundary, secret scan on generated files, redaction of evidence output, audit events for create / update / approve / export / deploy.
 
@@ -175,7 +177,7 @@ Security controls in place: signed HTTP-only session cookie, scrypt password has
 - Jobs run in-process: a job running when the server restarts is reported as failed and must be started again.
 - Rate limits are per process and in memory.
 - No backup/restore tooling or metrics endpoint beyond `/api/health`.
-- Lifecycle: one lifecycle per project; a running lifecycle cannot be moved to another template. Workspace members can only be added with `user:create` or directly in the database — there is no invitation screen, so a single-user workspace approves its own gates. An owner can approve a request they made themselves (no separation of duties is enforced). Due dates are calendar days in UTC. There are no notifications or reminders. Risks are closed, not deleted. Evidence cannot attach files.
+- Lifecycle: one lifecycle per project; a running lifecycle cannot be moved to another template. Workspace members can only be added with `user:create` or directly in the database — there is no invitation screen, so a single-user workspace approves its own gates. An editor cannot review a request they made themselves, but an owner can, because a one-person workspace has nobody else. Due dates are calendar days in UTC. There are no notifications or reminders. Risks are closed, not deleted. Evidence cannot attach files.
 - The diagram canvas and graph canvas are mouse-driven; each has a table/list alternative for keyboard use.
 
 See `docs/IMPLEMENTATION-PLAN.md` for decisions, deviations from the build skills, the acceptance checklist and the next milestone.

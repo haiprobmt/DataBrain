@@ -82,7 +82,8 @@ export function ApprovalsPanel({ projectId, stage, members, editable, userId, is
         </ul>
       )}
 
-      {requesting && <RequestApproval base={base} stage={stage} members={members} onClose={() => setRequesting(false)} />}
+      {/* An editor cannot review their own request, so they are not offered as a reviewer; an owner may. */}
+      {requesting && <RequestApproval base={base} stage={stage} members={isOwner ? members : members.filter((m) => m.id !== userId)} onClose={() => setRequesting(false)} />}
       {deciding && (
         <ReasonDialog
           title={`${DECISION[deciding.decision].title}: ${stage.name}`}
@@ -101,7 +102,7 @@ export function ApprovalsPanel({ projectId, stage, members, editable, userId, is
 
 function RequestApproval({ base, stage, members, onClose }: { base: string; stage: StageView; members: MemberOption[]; onClose: () => void }) {
   const submitTo = useSubmit();
-  const [reviewerId, setReviewerId] = useState<string | null>(stage.reviewer?.id ?? null);
+  const [reviewerId, setReviewerId] = useState<string | null>(members.some((m) => m.id === stage.reviewer?.id) ? (stage.reviewer?.id ?? null) : null);
   const [note, setNote] = useState("");
   const { busy, error, fieldErrors, submit } = useFormSubmit(() => submitTo(base, { body: { note, ...(reviewerId ? { reviewerId } : {}) } }, "Approval requested."), onClose);
   return (

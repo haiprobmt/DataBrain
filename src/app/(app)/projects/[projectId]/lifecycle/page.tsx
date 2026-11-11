@@ -49,7 +49,8 @@ export default async function LifecyclePage({ params, searchParams }: { params: 
   // Stage work is only possible while the lifecycle is active; the controls say why when it is not.
   const editable = canEdit && lifecycle.status === "active";
   const memberOptions = members.map((m) => ({ id: m.id, name: m.name, role: m.role }));
-  const allDone = progress.requiredStagesDone === progress.requiredStages;
+  // The lifecycle can be closed once every required stage is done and no optional stage is left under way.
+  const canComplete = progress.requiredStagesDone === progress.requiredStages && !stages.some((s) => s.status === "in_progress" || s.status === "blocked" || s.status === "pending_approval");
 
   return (
     <div className="stack">
@@ -74,7 +75,7 @@ export default async function LifecyclePage({ params, searchParams }: { params: 
             {lifecycle.completedAt && (<><dt>Completed</dt><dd>{formatDate(lifecycle.completedAt)}</dd></>)}
           </dl>
         </div>
-        {canEdit && <LifecycleControls projectId={projectId} status={lifecycle.status} targetEndAt={lifecycle.targetEndAt} canComplete={allDone} />}
+        {canEdit && <LifecycleControls projectId={projectId} status={lifecycle.status} targetEndAt={lifecycle.targetEndAt} canComplete={canComplete} />}
         {!canEdit && lifecycle.status !== "active" && <p className="note warn" style={{ marginTop: 12 }}>This lifecycle is {statusLabel(lifecycle.status).toLowerCase()}; its stages cannot be changed.</p>}
       </Card>
 

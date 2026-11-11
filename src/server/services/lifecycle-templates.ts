@@ -70,6 +70,17 @@ async function insertDefinitions(tx: Tx, templateId: string, stages: StageInput[
 }
 
 /**
+ * Template changes in one workspace are serialised with an advisory lock, so name uniqueness, the single default
+ * and "the default cannot be deactivated" are checked against the state the change is applied to.
+ */
+async function withTemplateLock<T>(workspaceId: string, work: (tx: Tx) => Promise<T>): Promise<T> {
+  return getDb().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`lifecycle-template:${workspaceId}`}))`);
+    return work(tx);
+  });
+}
+
+/**
  * Make sure the workspace has an active default template, creating the built-in one when it has none.
  * Idempotent and safe under concurrency (advisory lock per workspace), so it can run at workspace creation
  * and lazily before any read or lifecycle start in workspaces that existed before this feature.
@@ -80,8 +91,7 @@ export async function ensureDefaultLifecycleTemplate(ctx: Pick<Ctx, "userId" | "
   const [existing] = await db.select().from(t).where(activeDefault).limit(1);
   if (existing) return existing;
 
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`lifecycle-template:${ctx.workspaceId}`}))`);
+  return withTemplateLock(ctx.workspaceId, async (tx) => {
     const [again] = await tx.select().from(t).where(activeDefault).limit(1);
     if (again) return again;
     const [named] = await tx.select().from(t).where(and(eq(t.workspaceId, ctx.workspaceId), eq(t.name, DEFAULT_TEMPLATE_NAME))).limit(1);
@@ -168,7 +178,7 @@ export async function createLifecycleTemplate(ctx: Ctx, input: TemplateCreateInp
   assertCanEdit(ctx);
   const source = input.stages ? null : input.fromTemplateId ? await loadTemplate(ctx, input.fromTemplateId) : await ensureDefaultLifecycleTemplate(ctx);
   const stages: StageInput[] = input.stages ?? (await loadTemplateStages(source!.id));
-  const created = await getDb().transaction(async (tx) => {
+  const created = await withTemplateLock(ctx.workspaceId, async (tx) => {
     await assertNameFree(ctx, input.name, null, tx);
     const [row] = await tx.insert(t).values({ workspaceId: ctx.workspaceId, name: input.name, description: input.description, createdBy: ctx.userId }).returning();
     await insertDefinitions(tx, row!.id, stages);
@@ -184,9 +194,10 @@ export async function createLifecycleTemplate(ctx: Ctx, input: TemplateCreateInp
  */
 export async function updateLifecycleTemplate(ctx: Ctx, templateId: string, input: TemplateUpdateInput): Promise<TemplateView> {
   assertCanEdit(ctx);
-  const template = await loadTemplate(ctx, templateId);
-  if (template.isDefault && ctx.role !== "owner") throw forbidden("Only a workspace owner can change the default lifecycle template.");
-  await getDb().transaction(async (tx) => {
+  await loadTemplate(ctx, templateId);
+  await withTemplateLock(ctx.workspaceId, async (tx) => {
+    const template = await loadTemplate(ctx, templateId, tx);
+    if (template.isDefault && ctx.role !== "owner") throw forbidden("Only a workspace owner can change the default lifecycle template.");
     await assertNameFree(ctx, input.name, template.id, tx);
     const [updated] = await tx
       .update(t)
@@ -198,35 +209,36 @@ export async function updateLifecycleTemplate(ctx: Ctx, templateId: string, inpu
     await insertDefinitions(tx, template.id, input.stages);
     await audit(ctx, { action: "lifecycle.template.update", entityType: "lifecycle_template", entityId: template.id, summary: `Updated lifecycle template “${input.name}” to version ${template.version + 1}`, metadata: { version: template.version + 1, stages: input.stages.length } }, tx);
   });
-  return getLifecycleTemplate(ctx, template.id);
+  return getLifecycleTemplate(ctx, templateId);
 }
 
 export async function setDefaultLifecycleTemplate(ctx: Ctx, templateId: string): Promise<TemplateSummary> {
   if (ctx.role !== "owner") throw forbidden("Only a workspace owner can change the default lifecycle template.");
-  const template = await loadTemplate(ctx, templateId);
-  if (!template.isActive) throw precondition("Reactivate this template before making it the default.");
-  if (!template.isDefault) {
-    await getDb().transaction(async (tx) => {
-      // Clear first: the partial unique index allows one active default per workspace.
-      await tx.update(t).set({ isDefault: false }).where(and(eq(t.workspaceId, ctx.workspaceId), eq(t.isDefault, true)));
-      await tx.update(t).set({ isDefault: true }).where(eq(t.id, template.id));
-      await audit(ctx, { action: "lifecycle.template.default", entityType: "lifecycle_template", entityId: template.id, summary: `Made “${template.name}” the default lifecycle template` }, tx);
-    });
-  }
-  const view = await getLifecycleTemplate(ctx, template.id);
-  return view;
+  await loadTemplate(ctx, templateId);
+  await withTemplateLock(ctx.workspaceId, async (tx) => {
+    const template = await loadTemplate(ctx, templateId, tx);
+    if (!template.isActive) throw precondition("Reactivate this template before making it the default.");
+    if (template.isDefault) return;
+    // Clear first: the partial unique index allows one active default per workspace.
+    await tx.update(t).set({ isDefault: false }).where(and(eq(t.workspaceId, ctx.workspaceId), eq(t.isDefault, true)));
+    await tx.update(t).set({ isDefault: true }).where(eq(t.id, template.id));
+    await audit(ctx, { action: "lifecycle.template.default", entityType: "lifecycle_template", entityId: template.id, summary: `Made “${template.name}” the default lifecycle template` }, tx);
+  });
+  return getLifecycleTemplate(ctx, templateId);
 }
 
 /** Deactivate (archive) or reactivate a template. The default cannot be deactivated: choose another default first. */
 export async function setLifecycleTemplateActive(ctx: Ctx, templateId: string, isActive: boolean): Promise<TemplateSummary> {
   assertCanEdit(ctx);
-  const template = await loadTemplate(ctx, templateId);
-  if (!isActive && template.isDefault) throw precondition("This is the workspace default. Make another template the default before deactivating it.");
-  if (template.isActive !== isActive) {
-    await getDb().update(t).set({ isActive }).where(eq(t.id, template.id));
-    await audit(ctx, { action: isActive ? "lifecycle.template.reactivate" : "lifecycle.template.deactivate", entityType: "lifecycle_template", entityId: template.id, summary: `${isActive ? "Reactivated" : "Deactivated"} lifecycle template “${template.name}”` });
-  }
-  return getLifecycleTemplate(ctx, template.id);
+  await loadTemplate(ctx, templateId);
+  await withTemplateLock(ctx.workspaceId, async (tx) => {
+    const template = await loadTemplate(ctx, templateId, tx);
+    if (!isActive && template.isDefault) throw precondition("This is the workspace default. Make another template the default before deactivating it.");
+    if (template.isActive === isActive) return;
+    await tx.update(t).set({ isActive }).where(eq(t.id, template.id));
+    await audit(ctx, { action: isActive ? "lifecycle.template.reactivate" : "lifecycle.template.deactivate", entityType: "lifecycle_template", entityId: template.id, summary: `${isActive ? "Reactivated" : "Deactivated"} lifecycle template “${template.name}”` }, tx);
+  });
+  return getLifecycleTemplate(ctx, templateId);
 }
 
 /** The template a new lifecycle starts from: the one asked for (it must be active), or the workspace default. */
