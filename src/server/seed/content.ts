@@ -2,10 +2,10 @@ import { autoLayout } from "@/lib/diagram";
 import type { DiagramModel, KnowledgeAttributes, KnowledgeSection, NodeKind } from "@/lib/types";
 
 /**
- * Demo seed content. It is written from general, widely documented platform knowledge to make the
- * product usable on first run. It has NOT been reviewed against the cited documentation: every item
- * is seeded as a draft, flagged as demo content, and each source is a documentation home page with
- * no verification date. Review and verify items before relying on them.
+ * Base library content: structure, matching attributes and reference diagrams, written from general
+ * platform knowledge and never checked on its own. The descriptive text and sources of most items are
+ * replaced at load time by the research files in ./research (see library.ts). An item with no research
+ * overlay keeps this text, loads flagged as demo content and cites only an unchecked documentation home page.
  */
 export interface SeedSource {
   key: string;
@@ -163,7 +163,7 @@ export const SEED_ITEMS: SeedItem[] = [
           ["pe", "network", "Private endpoints", "Azure Private Link", "Private access to workspace and storage.", ["network"]],
           ["ingest", "ingestion", "Ingestion", "Auto Loader / Azure Data Factory", "Incremental file and CDC ingestion.", ["latency"]],
           ["adls", "storage", "Data lake", "ADLS Gen2 (Delta Lake)", "Bronze, silver and gold containers.", ["data_volume"]],
-          ["compute", "processing", "Processing", "Azure Databricks (Spark, Delta Live Tables)", "Batch and streaming transformation.", ["workloads"]],
+          ["compute", "processing", "Processing", "Azure Databricks (Spark, Lakeflow pipelines)", "Batch and streaming transformation.", ["workloads"]],
           ["ml", "processing", "Machine learning", "Databricks ML / MLflow", "Feature engineering, training and tracking.", ["workloads"]],
           ["sqlwh", "serving", "SQL serving", "Databricks SQL warehouse", "BI and ad-hoc SQL.", ["users"]],
           ["bi", "consumer", "BI tools and data scientists", "Power BI / notebooks", "Consumers.", ["users"]],
@@ -263,7 +263,7 @@ export const SEED_ITEMS: SeedItem[] = [
       clouds: ["aws"],
       workloads: ["data-engineering", "data-warehouse", "bi", "self-service", "data-science", "streaming-analytics"],
       latency: ["batch", "near-real-time", "real-time"],
-      sourceSystems: ["oracle", "postgresql", "mysql", "sql-server", "kafka", "files", "api", "iot", "mongodb", "salesforce"],
+      sourceSystems: ["oracle", "postgresql", "mysql", "sql-server", "kafka", "files"],
       security: ["sso", "rbac", "rls", "private-networking", "hybrid-connectivity", "cmk", "gdpr", "hipaa", "pci", "soc2", "data-residency", "masking", "dr", "ha"],
       skills: ["sql", "python", "spark", "terraform"],
       complexity: 4,
@@ -277,12 +277,12 @@ export const SEED_ITEMS: SeedItem[] = [
         [
           ["sources", "source", "Operational and event sources", "Databases, streams, files", "Source systems.", ["source_systems"]],
           ["vpc", "network", "Network", "VPC, Direct Connect/VPN, VPC endpoints", "Private connectivity.", ["network"]],
-          ["ingest", "ingestion", "Ingestion", "AWS DMS / Kinesis", "CDC and streaming ingestion.", ["latency"]],
+          ["ingest", "ingestion", "Ingestion", "AWS DMS / Amazon Kinesis Data Streams / Amazon Data Firehose", "CDC and streaming ingestion.", ["latency"]],
           ["s3", "storage", "Data lake", "Amazon S3", "Raw, cleansed and curated zones.", ["data_volume"]],
           ["glue", "processing", "Transformation", "AWS Glue (Spark)", "ETL jobs and Data Catalog.", ["workloads"]],
           ["athena", "serving", "Ad-hoc SQL", "Amazon Athena", "Serverless queries over the lake."],
           ["redshift", "serving", "Warehouse", "Amazon Redshift", "High-concurrency BI.", ["users"]],
-          ["bi", "consumer", "BI and data science", "QuickSight / other BI tools / SageMaker", "Consumers.", ["users"]],
+          ["bi", "consumer", "BI and data science", "BI tools / SageMaker", "Consumers.", ["users"]],
           ["lf", "governance", "Governance", "AWS Lake Formation", "Fine-grained permissions.", ["compliance"]],
           ["iam", "security", "Identity and keys", "IAM Identity Center / AWS KMS", "Single sign-on and encryption keys.", ["identity"]],
           ["cw", "operations", "Monitoring", "Amazon CloudWatch / CloudTrail", "Metrics, logs and audit trail.", ["availability"]],
@@ -323,7 +323,7 @@ export const SEED_ITEMS: SeedItem[] = [
       workloads: ["data-warehouse", "bi", "self-service", "data-engineering", "data-science", "streaming-analytics"],
       latency: ["batch", "near-real-time", "real-time"],
       sourceSystems: ["postgresql", "mysql", "oracle", "sql-server", "kafka", "files", "api", "salesforce", "iot"],
-      security: ["sso", "rbac", "rls", "private-networking", "cmk", "gdpr", "hipaa", "pci", "soc2", "data-residency", "masking"],
+      security: ["sso", "rbac", "rls", "cmk", "gdpr", "hipaa", "pci", "soc2", "data-residency", "masking"],
       skills: ["sql", "python", "dbt"],
       complexity: 2,
       migrationEffort: 3,
@@ -342,7 +342,7 @@ export const SEED_ITEMS: SeedItem[] = [
           ["marts", "serving", "Curated datasets", "BigQuery", "Models for reporting and ML.", ["users"]],
           ["bi", "consumer", "BI and notebooks", "Looker / other BI tools / Vertex AI", "Consumers.", ["users"]],
           ["iam", "security", "Identity", "Cloud IAM / Cloud Identity", "Single sign-on and roles.", ["identity"]],
-          ["dataplex", "governance", "Governance", "Dataplex", "Catalog, lineage and data quality.", ["compliance"]],
+          ["dataplex", "governance", "Governance", "Knowledge Catalog (formerly Dataplex)", "Catalog, lineage and data quality.", ["compliance"]],
           ["ops", "operations", "Monitoring and budgets", "Cloud Monitoring / budgets", "Usage and cost alerts.", ["budget"]],
         ],
         [
@@ -500,7 +500,7 @@ export const SEED_ITEMS: SeedItem[] = [
           ["blob", "storage", "Document store", "Azure Blob Storage", "Original documents and chunks.", ["data_volume"]],
           ["search", "serving", "Retrieval index", "Azure AI Search", "Vector and keyword index with security filters.", ["workloads"]],
           ["orchestrator", "processing", "Orchestration service", "Application service", "Retrieves passages, builds prompts, returns cited answers.", ["workloads"]],
-          ["llm", "processing", "Language model", "Azure OpenAI", "Generates answers from retrieved passages."],
+          ["llm", "processing", "Language model", "Azure OpenAI in Microsoft Foundry Models", "Generates answers from retrieved passages."],
           ["ui", "consumer", "Assistant", "Web or chat front end", "Users ask questions.", ["users"]],
           ["entra", "security", "Identity", "Microsoft Entra ID", "Sign-in and document-level access.", ["identity"]],
           ["pe", "network", "Private endpoints", "Azure Private Link", "Private access to search, storage and model.", ["network"]],
@@ -559,9 +559,9 @@ export const SEED_ITEMS: SeedItem[] = [
   item("best-practice", "environment-separation", "Separate development, test and production", "Use separate environments with promotion through source control, so nothing is changed directly in production.", ["devops", "operations"], ["caf"], { "best-practices": "One workspace or account per environment. Promote through pipelines. Use production-like data volumes for performance testing, with sensitive data masked." }),
 
   // ── Migration strategies ─────────────────────────────────────────────────
-  item("migration-strategy", "rehost-lift-and-shift", "Rehost (lift and shift)", "Move a workload to the new platform with as few changes as possible, to exit the old infrastructure quickly.", ["migration", "7r"], ["caf"], { context: "Useful when the deadline is fixed by a data-centre exit or licence end.", limitations: "Carries existing technical debt to the new platform; cloud benefits are limited until later optimisation." }, { strategy: "rehost" }),
-  item("migration-strategy", "replatform", "Replatform", "Move a workload and make targeted changes to use managed services, without redesigning it.", ["migration", "7r"], ["caf"], { context: "Useful when the logic is sound but the platform underneath should be managed.", limitations: "Compatibility gaps between source and target must be assessed first." }, { strategy: "replatform" }),
-  item("migration-strategy", "refactor-rebuild", "Refactor or rebuild", "Redesign the workload for the target platform — for example rebuilding ETL as ELT and cubes as semantic models.", ["migration", "7r"], ["caf"], { context: "Useful when the existing design blocks the outcomes wanted from the new platform.", limitations: "Highest effort and risk; needs thorough reconciliation." }, { strategy: "refactor" }),
+  item("migration-strategy", "rehost-lift-and-shift", "Rehost (lift and shift)", "Move a workload to the new platform with as few changes as possible, to exit the old infrastructure quickly.", ["migration", "strategy"], ["caf"], { context: "Useful when the deadline is fixed by a data-centre exit or licence end.", limitations: "Carries existing technical debt to the new platform; cloud benefits are limited until later optimisation." }, { strategy: "rehost" }),
+  item("migration-strategy", "replatform", "Replatform", "Move a workload and make targeted changes to use managed services, without redesigning it.", ["migration", "strategy"], ["caf"], { context: "Useful when the logic is sound but the platform underneath should be managed.", limitations: "Compatibility gaps between source and target must be assessed first." }, { strategy: "replatform" }),
+  item("migration-strategy", "refactor-rebuild", "Refactor or rebuild", "Redesign the workload for the target platform — for example rebuilding ETL as ELT and cubes as semantic models.", ["migration", "strategy"], ["caf"], { context: "Useful when the existing design blocks the outcomes wanted from the new platform.", limitations: "Highest effort and risk; needs thorough reconciliation." }, { strategy: "refactor" }),
   item("migration-strategy", "phased-coexistence-migration", "Phased migration with coexistence", "Migrate in waves while old and new platforms run side by side, reconciling each wave before cutting it over.", ["migration", "cutover"], [], { "how-it-works": "Group workloads into waves by dependency. For each wave: migrate, run in parallel, reconcile, repoint consumers, then decommission the source objects.", limitations: "Dual running costs more during the coexistence period and needs data kept in sync." }, { strategy: "phased" }),
 
   // ── Playbooks ─────────────────────────────────────────────────────────────

@@ -1,1 +1,536 @@
-{"cluster":"migration-delivery","researchedOn":"2026-11-11","items":[],"newItems":[]}
+{
+  "cluster": "migration-delivery",
+  "researchedOn": "2026-11-11",
+  "items": [
+    {
+      "slug": "rehost-lift-and-shift",
+      "summary": "Rehost moves a workload to the new platform without changing it to use cloud capabilities. AWS, Microsoft and Google all name this strategy and call it lift and shift. It is the fastest route off old infrastructure, but the workload arrives with its existing design and debt.",
+      "sections": {
+        "context": "Rehost fits when the driver is a deadline (data-centre exit, hardware or licence end) and the workload is stable. Microsoft's Cloud Adoption Framework (CAF) describes it as a like-for-like move and advises it only when you are confident the workload will not need modernisation for roughly the next two years; it also advises against rehosting workloads that already have problems. AWS lists rehost among the common strategies for large migrations and recommends modernising after the move rather than during it.",
+        "concepts": "How the frameworks name and count the strategies:\n\n- **AWS Prescriptive Guidance: 7 Rs** - retire, retain, rehost (lift and shift), relocate (hypervisor-level lift and shift), repurchase (drop and shop), replatform (lift and reshape / lift, tinker and shift), refactor or re-architect.\n- **Microsoft CAF** names retire, rehost, replatform, refactor, rearchitect, rebuild, replace and retain. It has no 'relocate' strategy, calls repurchase 'replace', and splits AWS's single refactor/re-architect into refactor, rearchitect and rebuild.\n- **Google Cloud** lists rehost, replatform, refactor, re-architect, rebuild and repurchase.\n\nAWS defines rehost as moving an application to the cloud without making any changes to take advantage of cloud capabilities.",
+        "how-it-works": "For a data warehouse, a rehost-style move keeps the schema, model and load logic and changes only where they run. Microsoft's Fabric migration planning guide contrasts lift-and-shift with phased modernisation and says lift-and-shift suits a warehouse that is already a well-designed star or snowflake schema. Microsoft's Synapse migration guides likewise recommend moving the existing data model as-is first and applying re-engineering afterwards on the target, so the source system is not disturbed. Even then, some change is unavoidable: data types, indexes and unsupported features differ between engines.",
+        "limitations": "- Existing technical debt and design limits move with the workload.\n- Google's guidance notes a rehosted workload is not optimised for the cloud and misses features such as horizontal scaling and fine-grained pricing.\n- CAF states that rehosting on its own is not modernisation: it changes where a workload runs, not what it can do.\n- A pure rehost is rarely possible between different warehouse engines; a compatibility assessment decides how much really moves unchanged.",
+        "validation": "Because nothing is meant to change, the test is equivalence: the same objects exist, row counts and control totals match, and the same reports return the same figures. See the data reconciliation practice."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "Fastest and lowest-change route off the old platform; least benefit from the new one.",
+          "Defers modernisation rather than removing the need for it."
+        ],
+        "limitations": [
+          "Carries existing technical debt to the new platform.",
+          "Engine differences (data types, indexes, unsupported features) still force some change in warehouse migrations."
+        ],
+        "steps": [
+          "Confirm the workload is stable and not due for modernisation soon.",
+          "Run a compatibility assessment against the target.",
+          "Move schema and data as-is; convert only what the target cannot run.",
+          "Reconcile source and target, then repoint consumers.",
+          "Plan the later optimisation work explicitly so it is not forgotten."
+        ]
+      },
+      "sources": [
+        { "title": "About the migration strategies - AWS Prescriptive Guidance", "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/large-migration-guide/migration-strategies.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "The 7 Rs, the rehost definition, and the advice to modernise after rather than during a large migration" },
+        { "title": "Select your cloud migration strategies - Cloud Adoption Framework", "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/plan/select-cloud-migration-strategy", "publisher": "Microsoft", "sourceType": "standards-framework", "supports": "CAF strategy names and the conditions under which rehost is appropriate" },
+        { "title": "Migrate to Google Cloud: Get started | Cloud Architecture Center | Google Cloud Documentation", "url": "https://docs.cloud.google.com/architecture/migration-to-gcp-getting-started", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Google's list of migration types and the limits of a rehosted workload" },
+        { "title": "Migration Strategy and Planning for Azure Synapse Dedicated SQL pools to Fabric - Microsoft Fabric", "url": "https://learn.microsoft.com/en-us/fabric/data-warehouse/migration-synapse-dedicated-sql-pool-planning", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Lift-and-shift versus phased modernisation for a warehouse, and engine differences that still need handling" },
+        { "title": "Design and performance for Teradata migrations - Azure Synapse Analytics", "url": "https://learn.microsoft.com/en-us/azure/synapse-analytics/migration-guides/teradata/1-design-performance-migration", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Move the existing data model as-is first, re-engineer afterwards on the target" }
+      ],
+      "corrections": [
+        "The item was tagged '7r' but cited only the Microsoft Cloud Adoption Framework. The '7 Rs' are AWS Prescriptive Guidance terminology; CAF uses a different list (retire, rehost, replatform, refactor, rearchitect, rebuild, replace, retain) with no 'relocate'. The text now states both and the AWS page is added as a source.",
+        "Added the CAF condition that rehost suits only workloads not expected to need modernisation in the near term (CAF says about two years)."
+      ],
+      "unconfirmed": [
+        "The exact number CAF assigns to its strategy list was not visible in the search results; the item lists the names and does not state a count for CAF."
+      ]
+    },
+    {
+      "slug": "replatform",
+      "summary": "Replatform moves a workload and makes limited changes so it uses managed cloud services, without redesigning it. AWS calls it 'lift and reshape' (or 'lift, tinker and shift'); Microsoft CAF describes it as moving to a modern hosting platform such as PaaS with minimal code changes.",
+      "sections": {
+        "context": "Replatform fits when the logic and data model are sound but the platform underneath should be managed for you. AWS's example is an on-premises Oracle database moved to Amazon RDS for Oracle. CAF groups replatform with refactor and rearchitect as the three modernisation strategies, placed on a continuum of rising complexity and value, with replatform at the low-effort end.",
+        "concepts": "- **AWS (7 Rs):** replatform = move the application to the cloud and introduce some level of optimisation to take advantage of cloud capabilities.\n- **Microsoft CAF:** replatform = move to a cloud platform with minimal code changes (for example IaaS to PaaS).\n- **Google Cloud:** replatform = 'lift and optimize'; more work than rehost because the workload must be tested on a different underlying platform.\n\nAll three agree on the boundary: the architecture stays, the hosting changes.",
+        "how-it-works": "In a warehouse migration, replatforming usually means keeping the dimensional model and most SQL while moving to a managed warehouse or lakehouse, converting what the target dialect does not accept. Vendor tools produce the conversion estimate: the AWS Schema Conversion Tool assessment report lists what converts automatically and the action items that need manual work; BigQuery's migration assessment and Snowflake's assessment tooling do the same for their targets; Microsoft's Fabric guide calls for confirming that schema, code and data are compatible before migrating.",
+        "limitations": "- Compatibility gaps decide the real effort. Data types, indexes, procedural code and unsupported features differ between engines; check them object by object.\n- ETL tools and semantic layers often do not replatform; they are rebuilt (see refactor or rebuild).\n- Testing effort is higher than for rehost because behaviour on the new engine must be proven, not assumed.",
+        "validation": "Reconcile data after each load and compare query and report results between source and target for an agreed period. Google's guidance is to build test cases, run them on the target and compare with the original warehouse's output."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "Gains managed-service benefits without the cost of a redesign.",
+          "Leaves the existing model and logic, including their weaknesses, largely in place."
+        ],
+        "limitations": [
+          "Compatibility gaps between source and target must be assessed before estimating.",
+          "Parts that cannot be converted fall into rebuild scope."
+        ],
+        "steps": [
+          "Run the target vendor's assessment or schema-conversion report.",
+          "Classify objects as auto-convertible, manual fix or rebuild.",
+          "Convert and deploy schema and code; migrate data.",
+          "Test behaviour and performance on the target.",
+          "Reconcile and cut over."
+        ]
+      },
+      "sources": [
+        { "title": "AWS Prescriptive Guidance glossary - AWS Prescriptive Guidance", "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/strategy-migration/apg-gloss.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Definition of replatform (lift and reshape) within the 7 Rs" },
+        { "title": "About the migration strategies - AWS Prescriptive Guidance", "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/large-migration-guide/migration-strategies.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Replatform definition and the Oracle-to-RDS example" },
+        { "title": "Plan your cloud modernization - Cloud Adoption Framework", "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/modernize/plan-cloud-modernization", "publisher": "Microsoft", "sourceType": "standards-framework", "supports": "Replatform, refactor and rearchitect as a continuum of modernisation strategies" },
+        { "title": "Viewing an assessment report in AWS Schema Conversion Tool - AWS Schema Conversion Tool", "url": "https://docs.aws.amazon.com/SchemaConversionTool/latest/userguide/CHAP_AssessmentReport.View.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Assessment report with action items for objects that cannot be converted automatically" },
+        { "title": "Migrate to Google Cloud: Get started | Cloud Architecture Center | Google Cloud Documentation", "url": "https://docs.cloud.google.com/architecture/migration-to-gcp-getting-started", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Google's 'lift and optimize' definition and its extra testing effort" }
+      ],
+      "corrections": [
+        "Tagged '7r' but sourced only to CAF; the definition is now given from both AWS (7 Rs, 'lift and reshape') and CAF ('minimal code changes, IaaS to PaaS'), with the AWS pages added as sources."
+      ],
+      "unconfirmed": []
+    },
+    {
+      "slug": "refactor-rebuild",
+      "summary": "Redesign the workload for the target platform instead of carrying the old design across. AWS treats this as one strategy, 'refactor / re-architect'. Microsoft CAF splits it into three: refactor (restructure code, same function), rearchitect (redesign the architecture) and rebuild (write a new implementation).",
+      "sections": {
+        "context": "Use this when the existing design blocks the outcomes wanted from the new platform, for example server-based ETL that should become in-platform ELT, or cubes that should become semantic models. CAF recommends rebuild when the cost of the other strategies outweighs their benefit, typically for a legacy system too outdated or inflexible to fix.",
+        "concepts": "The terms are not interchangeable across frameworks:\n\n- **AWS (7 Rs):** 'refactor / re-architect' = move the application and modify its architecture to take full advantage of cloud-native features.\n- **Microsoft CAF:** *refactor* = improve the internal structure of code while keeping its functionality; *rearchitect* = redesign around cloud-native patterns, described as the most complex and time-consuming modernisation option; *rebuild* = create a new cloud-native implementation.\n- **Google Cloud:** separates refactor ('move and improve'), re-architect and rebuild ('remove and replace').\n\nThis item covers the whole redesign end of the range. When writing a plan, say which framework's term you mean.",
+        "limitations": "- Highest effort, duration and risk of the migration strategies.\n- AWS Prescriptive Guidance does **not** recommend refactoring during a large migration, because it means modernising while migrating; it recommends rehost, relocate or replatform first and modernising afterwards.\n- Google's guidance likewise suggests a phased path: lift and shift or replatform first, refactor or re-architect later.\n- Rebuilt logic cannot be assumed equivalent to the old logic, so reconciliation effort is larger.",
+        "best-practices": "- Limit redesign to the workloads where the old design is the actual obstacle; replatform the rest.\n- Rebuild workload by workload, not the whole estate at once.\n- Keep the legacy output available as the reference result until the rebuilt version has reconciled for an agreed period.\n- For major changes, CAF advises a written rollback procedure that lists each undo action and its owner.",
+        "validation": "Compare business results, not just row counts: the rebuilt pipeline and model must produce the same figures as the legacy reports for an agreed period, with every intended difference documented and signed off."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "Largest benefit from the target platform; largest cost and risk to get there.",
+          "Removes technical debt instead of moving it, but delays the exit from the old platform."
+        ],
+        "limitations": [
+          "AWS guidance advises against refactoring during a large migration; modernise after the move.",
+          "Equivalence with the legacy system has to be demonstrated, which lengthens parallel running."
+        ],
+        "steps": [
+          "Identify the workloads where the current design blocks the target outcome.",
+          "Design the target model and pipelines for those workloads.",
+          "Rebuild one workload at a time.",
+          "Run alongside the legacy version and reconcile business results.",
+          "Document intended differences, obtain sign-off, then cut over."
+        ]
+      },
+      "sources": [
+        { "title": "AWS Prescriptive Guidance glossary - AWS Prescriptive Guidance", "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/strategy-migration/apg-gloss.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "AWS definition of refactor/re-architect and the note that it is not recommended for large migrations" },
+        { "title": "Select your cloud migration strategies - Cloud Adoption Framework", "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/plan/select-cloud-migration-strategy", "publisher": "Microsoft", "sourceType": "standards-framework", "supports": "CAF's separate definitions of refactor, rearchitect and rebuild" },
+        { "title": "Plan your cloud modernization - Cloud Adoption Framework", "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/modernize/plan-cloud-modernization", "publisher": "Microsoft", "sourceType": "standards-framework", "supports": "Rearchitect as the most complex option; rollback procedure for larger changes" },
+        { "title": "Migrate to Google Cloud: Get started | Cloud Architecture Center | Google Cloud Documentation", "url": "https://docs.cloud.google.com/architecture/migration-to-gcp-getting-started", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Google's refactor, re-architect and rebuild definitions and the phased approach" }
+      ],
+      "corrections": [
+        "The old text treated 'refactor' and 'rebuild' as one thing under a '7r' tag while citing CAF. In the AWS 7 Rs there is no 'rebuild'; the strategy is 'refactor / re-architect'. In CAF, refactor, rearchitect and rebuild are three separate strategies and 'refactor' specifically means restructuring code without changing function. The text now states this.",
+        "Added AWS's explicit advice not to refactor during a large migration."
+      ],
+      "unconfirmed": [
+        "The ETL-to-ELT and cubes-to-semantic-models examples are kept as illustrations; no vendor page in the results uses them as the definition of this strategy."
+      ]
+    },
+    {
+      "slug": "phased-coexistence-migration",
+      "summary": "Migrate in iterations while the old and new platforms both run, validating each iteration before its consumers are switched. Google, Microsoft and AWS guidance all describe an iterative, wave-based approach rather than a single cutover.",
+      "sections": {
+        "context": "A warehouse usually cannot be moved in one weekend: it has many sources, pipelines and consumers with dependencies between them. Google recommends a staged, iterative approach to reduce the complexity of warehouse migration. Microsoft's Synapse migration guides recommend limiting the first project to data marts to reduce risk and show results early, leaving ETL and history migration to later phases.",
+        "how-it-works": "- **Group by dependency.** CAF and AWS wave-planning guidance both start from dependency mapping: things that share a database, interface or owner move together. AWS calls these move groups; a wave contains one or more.\n- **Iterate.** In Google's model each use case is either *offloaded* (schema and data copied to the new platform while upstream feeds still load the old warehouse) or *fully migrated* (upstream and downstream no longer touch the old warehouse). Both warehouses are used in parallel until every use case is fully migrated.\n- **Validate, then switch.** Each iteration ends by checking the use case against an agreed definition of done.\n- **Decommission** source objects once nothing depends on them.",
+        "best-practices": "- Keep the first wave small and low-risk so the team learns the process; AWS guidance recommends small early waves.\n- Leave later waves loosely defined until earlier ones have shown what the work really involves (CAF).\n- Define success criteria and a rollback procedure for each cutover before it starts, and test the rollback path (CAF).\n- Keep one source of truth for scope and re-plan waves when new dependencies are found (AWS).\n- Run new and old side by side and compare results before cutover; route new workloads to the new platform first (Microsoft Fabric migration guidance).",
+        "limitations": "- Two platforms run and are paid for during coexistence.\n- Data must be kept in step between them. Incremental transfer has gaps to check per tool: for example, Google's Teradata transfer documentation states incremental transfers do not propagate hard deletes.\n- Offloaded use cases still depend on the old warehouse's feeds, so the old platform cannot be retired until upstream pipelines have moved.\n- Vendor guides describe parallel running but do not prescribe its length; agree it per wave.",
+        "validation": "Per iteration: schema matches, data reconciles (counts and aggregates, row-level where needed), business applications return the expected results, and governance requirements are met. Record the result as evidence for the cutover decision."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Duration of dual running of legacy and target platforms",
+          "Synchronisation pipelines needed only during coexistence",
+          "Repeated validation effort per wave"
+        ],
+        "tradeoffs": [
+          "Lower risk per cutover and early feedback; longer overall programme and a period of double running.",
+          "Offloading first gives quick wins but keeps the old warehouse alive until upstream feeds move."
+        ],
+        "limitations": [
+          "Dual running continues until the last dependent use case is fully migrated.",
+          "Incremental sync tools may not carry deletes; check and reconcile."
+        ],
+        "steps": [
+          "Map dependencies and group workloads into waves.",
+          "Choose a small, low-risk first wave.",
+          "For each wave: migrate schema and data, then pipelines.",
+          "Run old and new in parallel and reconcile.",
+          "Define and test rollback, then repoint consumers.",
+          "Decommission source objects once nothing depends on them.",
+          "Re-plan remaining waves with what was learned."
+        ]
+      },
+      "sources": [
+        { "title": "Introduction to BigQuery migration | Google Cloud Documentation", "url": "https://cloud.google.com/bigquery/docs/migration/migration-overview", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Staged, iterative migration; offload versus full migration; validation at the end of each iteration" },
+        { "title": "Teradata to BigQuery migration: Overview | Google Cloud Documentation", "url": "https://docs.cloud.google.com/bigquery/docs/migration/teradata-overview", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Both warehouses used in parallel during iterations" },
+        { "title": "Migration wave planning - Cloud Adoption Framework", "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/migrate/migration-wave-planning", "publisher": "Microsoft", "sourceType": "standards-framework", "supports": "Dependency-based grouping, loosely defined later waves, rollback and success criteria per cutover" },
+        { "title": "Task 5: Defining the wave planning process - AWS Prescriptive Guidance", "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/large-migration-portfolio-playbook/wave-planning.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Move groups, waves built from move groups, small early waves" },
+        { "title": "Design and performance for Teradata migrations - Azure Synapse Analytics", "url": "https://learn.microsoft.com/en-us/azure/synapse-analytics/migration-guides/teradata/1-design-performance-migration", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Start with data marts; address ETL and history in later phases" }
+      ],
+      "corrections": [
+        "The item had no sources. It is now backed by Google, Microsoft and AWS guidance and uses their terms (iterations, offload versus full migration, move groups).",
+        "Added the distinction between offloading and fully migrating a use case; the old text implied every wave ends with the source objects decommissioned, which is not true for offloaded use cases."
+      ],
+      "unconfirmed": [
+        "No vendor source in the results prescribes a length for the parallel-run period; none is stated."
+      ]
+    },
+    {
+      "slug": "warehouse-migration-assessment",
+      "summary": "A checklist for assessing a legacy warehouse before estimating its migration: inventory, dependencies, compatibility with the target, disposition per workload, wave plan and validation rules. Built from the Microsoft, Google, AWS and Snowflake migration guides.",
+      "sections": {
+        "context": "Every vendor migration guide puts assessment first. Microsoft's Fabric guide starts with 'assess and evaluate': list objects, map dependencies, identify stakeholders and baseline the current architecture. Google's BigQuery migration starts with a migration assessment that reports on the existing environment and the expected effort. The estimate is only as good as this step.",
+        "implementation": "1. **Inventory** databases, schemas, tables, views, procedures, ETL/ELT jobs, semantic models, reports and their consumers. Record volumes and refresh patterns.\n2. **Map dependencies** between objects, pipelines and consumers, including upstream feeds and downstream extracts.\n3. **Baseline** current performance and usage for the queries and reports that matter.\n4. **Check compatibility** with the target using the vendor's tool: schema-conversion or assessment report listing what converts automatically and what needs manual work. Check data types, indexes, procedural code and unsupported features.\n5. **Choose a disposition** per workload: retire, retain, rehost, replatform or redesign.\n6. **Group into waves** by dependency; pick a small, low-risk first wave.\n7. **Define validation rules** per wave: schema, counts and aggregates, row-level checks where needed, report comparison, and the definition of done.\n8. **Record unknowns** and assumptions with an owner.",
+        "how-it-works": "Vendor tools give the compatibility evidence:\n\n- **AWS Schema Conversion Tool** produces an assessment report with action items for anything it cannot convert, grouped by estimated effort; a multiserver report compares several sources.\n- **BigQuery migration assessment** reports on the existing warehouse and expected effort, including how many queries translate automatically.\n- **Snowflake** provides assessment and code-conversion tooling that orders objects into waves by dependency.\n- **Microsoft Fabric** provides a Migration Assistant and a planning guide listing data-type and feature differences.\n\nTool output covers schema and SQL. ETL tools, cubes and reports usually need manual assessment.",
+        "best-practices": "- Collect usage data so unused tables and reports can be retired rather than migrated.\n- Assess ETL and BI separately from the database; they often dominate effort.\n- Limit the first wave: Microsoft's Synapse guides suggest starting with data marts.\n- Treat the wave plan as provisional; AWS and CAF guidance both expect it to change as new dependencies surface.\n- Keep the inventory as the single source of truth for scope.",
+        "limitations": "- Automated assessment reports estimate conversion effort, not testing or reconciliation effort.\n- Tool coverage depends on the source and target pair; check current documentation for which sources each tool supports.\n- Effort bands in tool reports are indicative and should not be used as a quotation without review.",
+        "validation": "The assessment is complete when every object in scope has an owner, a disposition, a wave and a validation rule, and every open question has an owner."
+      },
+      "attributes": {
+        "steps": [
+          "Inventory databases, ETL jobs, semantic models, reports and consumers, with volumes and refresh patterns.",
+          "Map dependencies between objects, pipelines and consumers.",
+          "Baseline performance and usage of key queries and reports.",
+          "Run the target vendor's assessment or schema-conversion report and review compatibility gaps.",
+          "Choose a disposition per workload (retire, retain, rehost, replatform, redesign).",
+          "Group workloads into waves by dependency; choose a small first wave.",
+          "Define validation and reconciliation rules and the definition of done per wave.",
+          "Record unknowns and assumptions with an owner."
+        ],
+        "limitations": [
+          "Tool reports cover schema and SQL conversion; ETL, cubes and reports need manual assessment.",
+          "Tool support varies by source and target; check current documentation."
+        ]
+      },
+      "sources": [
+        { "title": "Migration Strategy and Planning for Azure Synapse Dedicated SQL pools to Fabric - Microsoft Fabric", "url": "https://learn.microsoft.com/en-us/fabric/data-warehouse/migration-synapse-dedicated-sql-pool-planning", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Assess-and-evaluate phase: object listing, dependency mapping, stakeholders, baseline; compatibility checks" },
+        { "title": "Introduction to BigQuery migration | Google Cloud Documentation", "url": "https://cloud.google.com/bigquery/docs/migration/migration-overview", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Assessment as the first step; prioritised backlog of use cases; validation against a definition of done" },
+        { "title": "Viewing an assessment report in AWS Schema Conversion Tool - AWS Schema Conversion Tool", "url": "https://docs.aws.amazon.com/SchemaConversionTool/latest/userguide/CHAP_AssessmentReport.View.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Assessment report, action items and effort grouping for objects that do not convert automatically" },
+        { "title": "Creating a multiserver assessment report in AWS Schema Conversion Tool - AWS Schema Conversion Tool", "url": "https://docs.aws.amazon.com/SchemaConversionTool/latest/userguide/CHAP_AssessmentReport.Multiserver.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Comparing conversion complexity across several source databases" },
+        { "title": "Migration wave planning - Cloud Adoption Framework", "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/migrate/migration-wave-planning", "publisher": "Microsoft", "sourceType": "standards-framework", "supports": "Dependency mapping before forming migration groups; waves refined as the migration proceeds" }
+      ],
+      "corrections": [
+        "The playbook cited only the general Cloud Adoption Framework home page. It is now sourced from specific warehouse migration guides (Microsoft Fabric, BigQuery, AWS SCT) and CAF wave planning.",
+        "Added three steps the vendor guides include and the old list lacked: dependency mapping, a performance and usage baseline, and recording unknowns. 'Classify by complexity' is now tied to the vendor assessment report rather than left as a judgement call.",
+        "'Cubes' replaced with 'semantic models' in the inventory wording, since not every source warehouse has cubes."
+      ],
+      "unconfirmed": [
+        "'Classify each by business criticality' is kept as practice inside the disposition and wave steps; the warehouse-specific vendor guides in the results did not state it in those words (CAF wave planning refers to criticality of dependencies)."
+      ]
+    },
+    {
+      "slug": "data-platform-discovery-workshop",
+      "summary": "A structured workshop to collect what an architecture decision needs: objectives, sources, workloads, security, constraints and team capability. This is an experience-based checklist; no official vendor methodology was found for it.",
+      "sections": {
+        "context": "Architecture choices depend on facts that are rarely written down in one place: what the business wants, what data exists, who will use it and what constraints apply. The workshop gathers them in a fixed order so that nothing the Architecture Finder scores on is left blank. It is a practitioner checklist rather than a vendor-defined method.",
+        "implementation": "1. Agree the business objective and how success will be measured.\n2. List source systems, with volumes, change rates and refresh needs.\n3. List workloads and user groups (reporting, self-service, data science, sharing).\n4. Capture compliance, identity and network constraints.\n5. Capture existing platforms, team skills, timeline and cost sensitivity.\n6. Record every unknown as a question with an owner and a date.\n\nSplit the session if needed: one with business stakeholders (steps 1 and 3), one with technical staff (steps 2, 4 and 5).",
+        "best-practices": "- Send the question list in advance so attendees bring facts, not estimates.\n- Write answers in the words the attendees use, then map them to the controlled vocabulary afterwards.\n- Mark each answer as confirmed, assumed or unknown.\n- Close by reading back the unknowns and their owners.",
+        "validation": "The output is usable when each intake field has an answer or a named owner for the open question, and the sponsor has confirmed the objective and success measures."
+      },
+      "attributes": {
+        "steps": [
+          "Agree the business objective and success measures.",
+          "List source systems, volumes, change rates and refresh needs.",
+          "List workloads and user groups.",
+          "Capture compliance, identity and network constraints.",
+          "Capture existing platforms, team skills, timeline and cost sensitivity.",
+          "Record every unknown as a question with an owner."
+        ]
+      },
+      "sources": [],
+      "corrections": [],
+      "unconfirmed": [
+        "No official vendor source was found for this playbook. A search for vendor discovery-workshop methodology returned only AWS Marketplace partner listings for 'Data-Driven Everything' workshops, which describe commercial offerings, not a published method. The item stays experience-based and should keep an 'unspecified' or practitioner source type.",
+        "The suggestion to split business and technical sessions appears in one partner listing only; it is offered as practice, not as vendor guidance."
+      ]
+    },
+    {
+      "slug": "terraform",
+      "summary": "HashiCorp's infrastructure-as-code tool. Resources are declared in configuration; Terraform records what it manages in a state file, shows the planned changes, then applies them through provider plugins.",
+      "sections": {
+        "concepts": "- **Providers** are plugins that talk to a platform's API. They are declared in `required_providers` with version constraints.\n- **State** binds each resource in the configuration to a real remote object and tracks metadata such as dependencies.\n- **Backends** define where state is stored. The default is a local file; remote backends include HCP Terraform, Amazon S3, Azure Blob Storage and Google Cloud Storage.\n- **Modules** are reusable groups of resources.\n- **Dependency lock file** (`.terraform.lock.hcl`) records the exact provider versions selected, so later runs make the same choice.",
+        "how-it-works": "The core workflow is write, plan, apply.\n\n- `terraform init` installs the providers and modules the configuration references; it must run before plan or apply.\n- `terraform plan` compares configuration, state and real infrastructure and shows what would change. `-out` saves the plan to a file.\n- `terraform apply` makes the changes. Applying a saved plan file performs exactly the changes that were reviewed.\n\nWith a remote backend that supports locking, Terraform locks the state during operations that write it, so two runs cannot change it at once.",
+        "best-practices": "- Store state in a remote backend with locking and access control; do not keep it in version control.\n- Commit the dependency lock file so everyone and every pipeline uses the same provider versions.\n- Constrain provider versions; HashiCorp suggests `~>` constraints in root modules to set a lower and upper bound.\n- Pin remote modules to an exact version if you need repeatable selection: the lock file covers providers only.\n- In automation, save the plan and apply that saved plan.\n- Change state only with `terraform state` commands, never by editing the file.",
+        "limitations": "- Not every backend supports state locking; check the backend's documentation.\n- The lock file does not record module versions; Terraform selects the newest module version that meets the constraint.\n- A saved plan cannot be applied if Terraform or its plugins are upgraded between plan and apply.\n- Resources changed outside Terraform show up as drift on the next plan and must be reconciled.\n- Locking options change over time (for example the S3 backend's locking mechanism); check current documentation.",
+        "security": "- State can contain secrets. Marking a variable or output `sensitive` only hides it from display; the value is still stored in plain text in state.\n- Saved plan files also hold sensitive values in clear text; treat them as sensitive artifacts and do not commit them.\n- Restrict who can read the state store and encrypt it.\n- Supply provider credentials through environment variables or a managed identity; they are not written to the plan."
+      },
+      "attributes": {
+        "costDrivers": [
+          "The open tooling itself adds no infrastructure cost; cost comes from the resources it creates",
+          "A hosted run and state service, if used, is licensed separately",
+          "Storage for remote state and CI runner time"
+        ],
+        "tradeoffs": [
+          "One language and workflow across clouds; each provider still has its own resource model.",
+          "State makes plans fast and accurate but becomes a sensitive asset that must be protected and locked."
+        ],
+        "limitations": [
+          "State may contain secrets in plain text and needs a secured, locked remote backend.",
+          "The dependency lock file tracks providers only, not modules.",
+          "Locking support depends on the backend."
+        ],
+        "compare": {
+          "Delivery model": "Command-line tool, with an optional hosted service (HCP Terraform) or self-hosted Terraform Enterprise",
+          "Primary skills": "Terraform configuration language (HCL), cloud provider resource models, CI/CD",
+          "Storage format": "Not a data store; keeps a state file in a local or remote backend",
+          "Billing model": "Tooling licensed separately from the cloud resources it provisions; check current HashiCorp terms",
+          "Clouds": "Azure, AWS, Google Cloud and others through providers"
+        }
+      },
+      "sources": [
+        { "title": "Purpose of Terraform State", "url": "https://developer.hashicorp.com/terraform/language/state/purpose", "publisher": "HashiCorp", "sourceType": "vendor-official", "supports": "What state is for: binding configuration to real objects, metadata, performance" },
+        { "title": "Backends: State Storage and Locking", "url": "https://developer.hashicorp.com/terraform/language/state/backends", "publisher": "HashiCorp", "sourceType": "vendor-official", "supports": "Local versus remote backends; locking is backend-dependent" },
+        { "title": "Overview of the core Terraform workflow", "url": "https://developer.hashicorp.com/terraform/intro/core-workflow", "publisher": "HashiCorp", "sourceType": "vendor-official", "supports": "Write, plan, apply workflow" },
+        { "title": "Dependency Lock File (.terraform.lock.hcl) - Configuration Language", "url": "https://developer.hashicorp.com/terraform/language/files/dependency-lock", "publisher": "HashiCorp", "sourceType": "vendor-official", "supports": "Lock file records provider selections only; commit it; modules are not locked" },
+        { "title": "Running Terraform in automation", "url": "https://developer.hashicorp.com/terraform/tutorials/automation/automate-terraform", "publisher": "HashiCorp", "sourceType": "vendor-official", "supports": "Saved plan then apply in pipelines; plan files contain sensitive data; upgrade between plan and apply fails" }
+      ],
+      "corrections": [
+        "'Pin provider versions' was imprecise. HashiCorp's guidance is to set version constraints in required_providers and commit the dependency lock file, which records the exact versions chosen. The lock file covers providers only; modules need their own exact version constraint.",
+        "'Keep state remote and locked' now carries the caveat that not every backend supports locking.",
+        "Added that state and saved plan files store sensitive values in plain text even when marked sensitive; the old text had no security section."
+      ],
+      "unconfirmed": [
+        "Licence terms and editions are not described; the search results did not cover them and they change. The compare 'Billing model' value is deliberately generic."
+      ]
+    },
+    {
+      "slug": "infrastructure-as-code-review",
+      "summary": "Keep infrastructure in version control, generate the plan in a pipeline on every pull request, and apply only a plan that a person has read and approved. Add automated policy checks so reviewers see violations before approval.",
+      "sections": {
+        "context": "A plan is the only reliable statement of what an infrastructure change will do. Applying without reading it, or applying something different from what was read, is how resources are destroyed by accident. HashiCorp, Microsoft and Google guidance all describe the same control: plan in automation, review, then apply.",
+        "how-it-works": "- A pull request triggers a plan (in HCP Terraform, a *speculative plan*, which cannot be applied) and the result is linked from the pull request.\n- Microsoft's landing zone guidance runs Terraform plan or Bicep what-if against every environment, including production, in the pull request before merge.\n- After approval and merge, the pipeline applies. With the Terraform CLI, save the plan with `-out` and apply that file so the changes made are exactly the ones reviewed.\n- Policy as code evaluates the plan automatically. HCP Terraform supports Sentinel and Open Policy Agent policies with advisory and mandatory enforcement levels; Google suggests a policy check on plan output before apply.",
+        "best-practices": "- Generate a plan before every apply, save it, and have an infrastructure owner approve it (Google Cloud Terraform guidance).\n- Run Terraform from an automated pipeline, not from individual machines, for production.\n- Require a human approval gate on the production apply stage (Microsoft CAF).\n- Use separate identities for plan and apply: plan and what-if need read access only (Microsoft CAF).\n- Use the same code for all environments and vary only variables.\n- Run format and validate checks in CI before the plan.\n- Do not edit state by hand; use `terraform state` commands.",
+        "security": "- Plan output and saved plan files can contain sensitive values in clear text. Limit who can see pipeline logs and artifacts, and never commit plan files.\n- `terraform show -json` on a plan outputs sensitive values unredacted; restrict access to it.\n- Give the plan identity read-only rights and the apply identity write rights, each scoped to its environment.\n- Restrict access to the state store to the pipeline and a small group of administrators.",
+        "limitations": "- A saved plan goes stale if infrastructure changes between plan and apply; apply promptly after approval.\n- HCP Terraform remote execution does not accept uploaded saved plans; the approval applies to the run instead.\n- Policy checks catch rule violations, not design mistakes; a person still has to read the plan.\n- Large plans are hard to review; keep changes small.",
+        "validation": "Check that no production apply in the pipeline history lacks an approval, that the applied plan matches the approved one, and that a plan run on the main branch after deployment shows no unexpected changes (drift)."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "Slower than applying from a laptop; far fewer accidental changes.",
+          "Policy as code catches known bad patterns automatically but needs maintenance."
+        ],
+        "limitations": [
+          "Plans become stale; approve and apply close together.",
+          "Plan artifacts can expose secrets and must be access-controlled."
+        ],
+        "steps": [
+          "Keep all infrastructure code in version control.",
+          "Run format, validate and a plan on every pull request.",
+          "Run policy checks against the plan.",
+          "Have an infrastructure owner review and approve the plan.",
+          "Apply the approved plan from the pipeline, with an approval gate for production.",
+          "Run a plan periodically to detect drift."
+        ]
+      },
+      "sources": [
+        { "title": "Running Terraform in automation", "url": "https://developer.hashicorp.com/terraform/tutorials/automation/automate-terraform", "publisher": "HashiCorp", "sourceType": "vendor-official", "supports": "Plan with -out, review, apply the saved plan; plan files are sensitive" },
+        { "title": "Remote operations in HCP Terraform", "url": "https://developer.hashicorp.com/terraform/cloud-docs/workspaces/run/remote-operations", "publisher": "HashiCorp", "sourceType": "vendor-official", "supports": "Speculative plans on pull requests that cannot be applied" },
+        { "title": "Manage policies and policy sets in Terraform Enterprise", "url": "https://developer.hashicorp.com/terraform/enterprise/workspaces/policy-enforcement/manage-policy-sets", "publisher": "HashiCorp", "sourceType": "vendor-official", "supports": "Sentinel and OPA policy sets and enforcement levels" },
+        { "title": "Use infrastructure as code to update an Azure landing zone - Cloud Adoption Framework", "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/considerations/infrastructure-as-code-updates", "publisher": "Microsoft", "sourceType": "standards-framework", "supports": "Plan or what-if in the pull request, separate plan and apply identities, approval gate for production" },
+        { "title": "Best practices for Terraform operations | Terraform on Google Cloud | Google Cloud Documentation", "url": "https://docs.cloud.google.com/docs/terraform/best-practices/operations", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Always plan first, save the plan, owner approval, automated pipeline, do not modify state manually" }
+      ],
+      "corrections": [
+        "'Require approval of the exact plan before apply' is correct for the Terraform CLI (apply the saved plan file) but HCP Terraform remote execution does not accept uploaded saved plans; the text now distinguishes the two.",
+        "Added policy as code (Sentinel, OPA), separate read-only plan identity and the sensitivity of plan output, none of which were in the old text."
+      ],
+      "unconfirmed": [
+        "'Run format and validate in CI' is kept as common practice; the search results confirmed plan, review and apply in automation but did not quote a page prescribing fmt and validate as CI steps."
+      ]
+    },
+    {
+      "slug": "environment-separation",
+      "summary": "Run development, test and production in separate, isolated environments and promote changes between them through source control and pipelines. Azure, AWS and Google Cloud each recommend a different isolation boundary: subscription, account and project.",
+      "sections": {
+        "context": "Without separation, a development mistake can reach production data, and production cannot be protected by stricter policy than development. All three cloud frameworks recommend isolating production from non-production. AWS adds that production workloads should not depend on anything in a non-production environment.",
+        "how-it-works": "The isolation boundary differs by cloud:\n\n- **Azure (CAF):** ideally one subscription per application environment. Do **not** create separate management groups for dev, test and production; keep an application's environment subscriptions under the same management group. A sandbox area is kept apart from landing zone subscriptions.\n- **AWS:** separate accounts for production and non-production, placed in Prod and non-production organizational units under the workloads OU.\n- **Google Cloud:** separate projects per environment, commonly grouped in environment folders (for example production, non-production, development).\n\nData platforms add their own layer: Fabric uses a workspace per stage; Databricks uses a workspace per environment with a Unity Catalog catalog per environment.",
+        "best-practices": "- Promote the same code through every environment; vary only configuration (CAF, Databricks).\n- Deploy through pipelines with an approval for production; limit who can deploy to production (Fabric guidance).\n- Keep pre-production similar to production so tests are meaningful.\n- Use separate groups, role assignments and deployment identities per environment.\n- On Databricks, start with development and production workspaces and add staging as the team grows; bind the production catalog to the production workspace only.\n- On Fabric, consider a separate capacity per environment so test load cannot affect production.\n- Keep CI/CD tooling in its own account or subscription where the framework recommends it (AWS deployments OU).",
+        "limitations": "- More environments mean more cost and more to keep in step.\n- Azure allows a single subscription for several environments when they cannot be isolated, share the same teams and can share policies; this is the exception.\n- Separate accounts or subscriptions make cross-environment deployment and networking more involved.\n- Some settings are per workspace or per account, so environment count can be driven by network or encryption requirements.",
+        "security": "Production gets the strictest policy and the narrowest access. Non-production should not hold unmasked production data unless it is protected to the same standard; AWS cites keeping production data out of non-production as a reason for account separation. On Databricks, isolating the production catalog keeps production data unreachable from development even if an identity is misconfigured.",
+        "validation": "Confirm that a development identity cannot read production data, that no production resource references a non-production resource, and that the last production change arrived through the pipeline with an approval."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Number of environments kept running",
+          "Size of non-production compute and data copies",
+          "Separate capacities or workspaces per environment where used"
+        ],
+        "tradeoffs": [
+          "Strong isolation and safe testing; more resources to pay for and manage.",
+          "Fewer, shared environments are cheaper but weaken the protection of production."
+        ],
+        "limitations": [
+          "Extra cost and configuration drift between environments.",
+          "Cross-account or cross-subscription deployment adds pipeline and networking work."
+        ]
+      },
+      "sources": [
+        { "title": "Manage application development environments in Azure landing zones - Cloud Adoption Framework", "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/landing-zone/design-area/management-application-environments", "publisher": "Microsoft", "sourceType": "standards-framework", "supports": "Subscription per environment; no per-environment management groups; single-subscription exception" },
+        { "title": "Production and non-production workload environments - Organizing Your AWS Environment Using Multiple Accounts", "url": "https://docs.aws.amazon.com/whitepapers/latest/organizing-your-aws-environment/production-and-non-production-workload-environments.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Separate accounts and OUs for production and non-production; no production dependency on non-production" },
+        { "title": "Decide a resource hierarchy for your Google Cloud landing zone | Cloud Architecture Center | Google Cloud Documentation", "url": "https://docs.cloud.google.com/architecture/landing-zones/decide-resource-hierarchy", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Environment-based folder hierarchy with separate projects" },
+        { "title": "Best practices for lifecycle management in Fabric - Microsoft Fabric", "url": "https://learn.microsoft.com/en-us/fabric/cicd/best-practices-cicd", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Separate workspaces per stage, capacity isolation, limiting who deploys to production" },
+        { "title": "Phase 2: Design workspace strategy - Azure Databricks", "url": "https://learn.microsoft.com/en-us/azure/databricks/lakehouse-architecture/deployment-guide/workspace-strategy", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Development and production workspaces, adding staging; do not create workspaces per team" }
+      ],
+      "corrections": [
+        "'One workspace or account per environment' is now stated per cloud. On Azure the recommended boundary is a subscription per environment, and CAF explicitly says not to create separate management groups for dev, test and production. On AWS it is an account; on Google Cloud a project.",
+        "Added the AWS rule that production must not depend on non-production, and the CAF-documented exception allowing a shared subscription."
+      ],
+      "unconfirmed": [
+        "'Use production-like data volumes for performance testing, with sensitive data masked' was not confirmed in those words by the pages returned; the masking point is kept as a security note tied to AWS's stated reason for account separation, and the volume point is dropped."
+      ]
+    },
+    {
+      "slug": "data-reconciliation",
+      "summary": "After each load or migration step, compare source and target at increasing depth (schema, row counts, column aggregates, then row-level hashes where needed), record the result, and stop the process when a tolerance is exceeded.",
+      "sections": {
+        "context": "A load that finishes without error has not been shown to be complete or correct. Vendor migration guides all include a validation step before cutover: Google validates each migration iteration against a definition of done, Snowflake's guides place validation before cutover, and AWS DMS can validate rows as it replicates.",
+        "how-it-works": "Validation is layered, cheapest first:\n\n1. **Schema**: same tables, columns and compatible data types.\n2. **Counts**: row counts per table, and per group (for example per day or per business unit).\n3. **Column aggregates**: sum, min, max, average on agreed measures.\n4. **Row level**: compare each row by primary key, often by hashing the row's columns.\n\nVendor tools implement these layers. Google's open-source Data Validation Tool does column, group-by, schema and row-hash validation across engines. Snowflake's migration tooling describes schema, metric and optional row-level validation. AWS DMS data validation compares each source row with its target row and reports mismatches. Report-level comparison (same query, both systems) sits on top.",
+        "best-practices": "- Record rows read and written per object on every run.\n- Agree the control totals and tolerances with the business owner before the migration, not after a mismatch.\n- Fail the pipeline when a tolerance is exceeded; do not continue downstream.\n- Use row-level comparison selectively; it is the most expensive layer.\n- Keep results as evidence for the cutover decision.\n- Compare business reports for an agreed period as well as tables.\n- Reconcile deletes explicitly when using incremental sync during parallel running.",
+        "limitations": "- Row-level validation needs a primary or unique key. AWS DMS does not validate tables without one.\n- Matching counts and sums do not prove rows are identical; offsetting errors can cancel out.\n- Some aggregates are not comparable across engines; the Data Validation Tool documentation warns about standard deviation. Floating-point and time-zone handling also differ.\n- Hashing needs both sides to cast and normalise values the same way.\n- Validation queries add load to the source system.",
+        "validation": "Test the reconciliation itself: introduce a known difference (delete a row, change a value) in a test copy and confirm the check reports it."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Compute for validation queries on both source and target",
+          "Row-level comparison on large tables",
+          "Storage for retained validation results"
+        ],
+        "tradeoffs": [
+          "Deeper checks give more assurance and cost more compute and time.",
+          "Counts and aggregates are cheap but can miss offsetting errors."
+        ],
+        "limitations": [
+          "Row-level checks need a primary or unique key.",
+          "Cross-engine differences in types and functions can cause false mismatches."
+        ],
+        "steps": [
+          "Agree measures, tolerances and the definition of done.",
+          "Compare schema.",
+          "Compare row counts, overall and by group.",
+          "Compare column aggregates on agreed measures.",
+          "Run row-level comparison where risk justifies it.",
+          "Fail on breach; record results as evidence."
+        ]
+      },
+      "sources": [
+        { "title": "AWS DMS data validation - AWS Database Migration Service", "url": "https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Validating.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Row-by-row comparison of source and target; tables need a primary or unique key" },
+        { "title": "GitHub - GoogleCloudPlatform/professional-services-data-validator: Utility to compare data between homogeneous or heterogeneous environments to ensure source and target tables match", "url": "https://github.com/GoogleCloudPlatform/professional-services-data-validator", "publisher": "Google Cloud (GitHub)", "sourceType": "vendor-official", "supports": "Column, schema and row-hash validation; default count check; caveat on standard deviation" },
+        { "title": "Introduction to BigQuery migration | Google Cloud Documentation", "url": "https://cloud.google.com/bigquery/docs/migration/migration-overview", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Validate each iteration against a definition of done; Data Validation Tool for data checks" },
+        { "title": "Data Migration & Validation", "url": "https://docs.snowflake.com/en/migrations/data-migration-and-data-validation", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Validate migrated data before cutover; layered schema, metric and row validation" },
+        { "title": "Oracle to Snowflake Migration Guide", "url": "https://docs.snowflake.com/en/migrations/guides/oracle", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Validation phase with row counts and aggregate or checksum comparison ahead of cutover" }
+      ],
+      "corrections": [
+        "The item had no sources and described only row counts and control totals. It now describes the layered approach the vendor tools use (schema, counts, aggregates, row-level hash) and states that counts and totals alone do not prove equality.",
+        "Added the key requirement for row-level validation and cross-engine comparison caveats."
+      ],
+      "unconfirmed": [
+        "'Fail the pipeline when a tolerance is exceeded' and 'keep the results as evidence' are kept as practice; the vendor pages describe reporting mismatches and validating before cutover but do not prescribe tolerance handling."
+      ]
+    },
+    {
+      "slug": "data-platform-architecture",
+      "summary": "The design of how analytical data is ingested, stored, processed, catalogued, secured and served. Vendor reference architectures describe it as a set of layers, each with its own technology choices.",
+      "sections": {
+        "concepts": "Vendor frameworks break a data platform into similar layers:\n\n- **Ingestion**: batch, change data capture and streaming.\n- **Storage**: a central lake or warehouse, often organised in zones by how ready the data is for use.\n- **Processing and analytics**: batch and stream processing.\n- **Catalog and search**: metadata, discovery, lineage.\n- **Data access and security**: permissions, encryption, audit.\n- **Serving and user access**: warehouses, semantic models, BI and APIs.\n\nThe AWS Well-Architected Data Analytics Lens lists these areas; Microsoft's Azure Architecture Center describes the same components in its big data architecture guidance, including Lambda (separate batch and speed paths) and Kappa (one stream path) styles.",
+        "context": "The domain covers lakehouses, warehouses, streaming platforms and semantic layers, plus the networking, identity, governance and operations around them. Most decisions are trade-offs between latency, cost, skills and control, which is why this library pairs scenarios with the patterns and practices they depend on.",
+        "best-practices": "- Decide per layer, and state the requirement that drove each choice.\n- Separate storage zones by data readiness and give each its own access policy.\n- Treat governance, security and operations as part of the design, not as later additions.\n- Avoid duplicating processing logic across batch and stream paths unless latency needs require it; Microsoft notes the Lambda style puts logic in two places."
+      },
+      "attributes": {},
+      "sources": [
+        { "title": "Definitions - Analytics Lens", "url": "https://docs.aws.amazon.com/wellarchitected/latest/analytics-lens/definitions.html", "publisher": "Amazon Web Services", "sourceType": "standards-framework", "supports": "Layered model: ingestion, data access and security, catalog and search, central storage, processing and analytics, user access" },
+        { "title": "Big Data Architectures - Azure Architecture Center", "url": "https://learn.microsoft.com/en-us/azure/architecture/databases/guide/big-data-architectures", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Components of an analytical architecture; Lambda and Kappa styles" },
+        { "title": "Configuration notes - Data Analytics Lens", "url": "https://docs.aws.amazon.com/wellarchitected/latest/analytics-lens/configuration-notes.html", "publisher": "Amazon Web Services", "sourceType": "standards-framework", "supports": "Storage zones by readiness; catalog and access control as architecture layers" }
+      ],
+      "corrections": [
+        "No factual error. The definition is now tied to the layer model used in vendor reference architectures, and sources are added (the item previously had none)."
+      ],
+      "unconfirmed": []
+    },
+    {
+      "slug": "data-governance",
+      "summary": "The capability to know what data exists, what it means, who owns it, who may use it, how good it is and how it flows. Vendor platforms implement it through a catalog, classification, access policy, lineage and data quality.",
+      "sections": {
+        "concepts": "Common building blocks across Microsoft Purview, Google's Dataplex catalog and AWS:\n\n- **Catalog / inventory**: technical metadata collected by scanning sources.\n- **Business context**: glossary terms, owners, domains and data products that describe data for consumers.\n- **Classification**: labelling data, including sensitive data, during discovery.\n- **Access policy**: who may use which data, down to column and row level.\n- **Lineage**: how data moves and is transformed, used for impact and root-cause analysis.\n- **Data quality**: rules and scores that show how close data is to its expected state.\n- **Audit**: a record of access.",
+        "how-it-works": "- **Microsoft Purview** separates a Data Map (the technical layer, populated by scanning and classification) from a Unified Catalog (the business layer with governance domains, data products, glossary terms and data quality).\n- **Google Cloud** provides a catalog built on entries and aspects, with business glossary, lineage, data profiling and data quality scans. It was named Dataplex Universal Catalog and is now presented as Knowledge Catalog; check the current name.\n- **AWS** uses the Glue Data Catalog for technical metadata, Lake Formation for table, column, row and cell-level permissions, and Amazon DataZone for business metadata and access requests.\n- **Databricks** implements the same capability in Unity Catalog.",
+        "best-practices": "- Have data owners define access rules according to the sensitivity and criticality of the data (AWS Data Analytics Lens).\n- Add business metadata on top of scanned technical metadata; technical metadata alone does not make data findable.\n- Group data into domains and data products with named owners.\n- Use lineage for impact analysis before changes and for tracing quality problems.\n- Apply data quality rules to the data products people actually consume first.",
+        "limitations": "- A catalog holds metadata. Microsoft states that Purview catalog roles do not grant access to the underlying data; access is still enforced in the data platform.\n- Automatic lineage covers only supported systems; other sources need custom integration.\n- Tooling does not replace decisions about ownership and policy; those are organisational.\n- Product names and feature status in this area change often; check current documentation.",
+        "security": "Governance and security meet at access policy: fine-grained permissions (table, column, row), classification of sensitive data and audit logs of access. Keep catalog permissions (who can see metadata) distinct from data permissions (who can read the data)."
+      },
+      "attributes": {},
+      "sources": [
+        { "title": "Learn about data governance with Microsoft Purview", "url": "https://learn.microsoft.com/en-us/purview/data-governance-overview", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Data Map and Unified Catalog; domains, data products, glossary, data quality; metadata-only access boundary" },
+        { "title": "About metadata in Knowledge Catalog | Google Cloud Documentation", "url": "https://docs.cloud.google.com/dataplex/docs/catalog-overview", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Catalog metamodel of entries and aspects; current product naming" },
+        { "title": "About data lineage | Knowledge Catalog | Google Cloud Documentation", "url": "https://docs.cloud.google.com/dataplex/docs/about-data-lineage", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Lineage for root-cause and impact analysis; automatic coverage limited to supported systems" },
+        { "title": "Configuration notes - Data Analytics Lens", "url": "https://docs.aws.amazon.com/wellarchitected/latest/analytics-lens/configuration-notes.html", "publisher": "Amazon Web Services", "sourceType": "standards-framework", "supports": "Owners define access rules by sensitivity; Lake Formation fine-grained access; Glue technical metadata and DataZone business metadata" }
+      ],
+      "corrections": [
+        "No factual error in the one-line definition. Added data quality and business meaning to the summary, the vendor implementations, and the point that catalog access is not data access. The item previously had no sources."
+      ],
+      "unconfirmed": [
+        "No DAMA definition is cited: no search result supported one, so the item relies on vendor documentation only."
+      ]
+    },
+    {
+      "slug": "data-ingestion",
+      "summary": "The capability to bring data from source systems into the platform reliably. The main patterns are batch loads, change data capture (CDC) and event streaming; the choice follows the latency needed and what the source can provide.",
+      "sections": {
+        "concepts": "- **Batch**: files or query extracts loaded on a schedule. Lowest cost and complexity; latency of minutes to hours.\n- **Incremental batch**: only rows changed since a stored high-water mark (a cursor column). Captures the latest state, not every intermediate change.\n- **Change data capture**: reads the source database's change log and delivers inserts, updates and deletes. Usually starts with a full load, then applies changes.\n- **Streaming**: events are published to a message store (Kafka, Azure Event Hubs, Amazon Kinesis, Pub/Sub) and consumed continuously.\n\nAWS also distinguishes *homogeneous* ingestion (data lands as-is) from *heterogeneous* ingestion (data is transformed on the way in).",
+        "how-it-works": "Vendor services map onto these patterns:\n\n- **Azure / Fabric**: orchestrated pipelines (Data Factory) for batch; Event Hubs or Kafka as the buffer for real-time sources; CDC feeds treated as a stream source.\n- **AWS**: Database Migration Service for full load, full load plus CDC, or CDC only; streaming services for events.\n- **Google Cloud**: BigQuery load jobs for batch, the Storage Write API for streaming, Datastream for CDC replication.\n- **Databricks**: managed connectors for databases (CDC) and SaaS sources, Auto Loader for files arriving in cloud storage, streaming connectors for Kafka.",
+        "best-practices": "- Choose the simplest pattern that meets the latency requirement; batch is cheaper when the source changes infrequently.\n- Make loads incremental and idempotent so a re-run does not duplicate data.\n- Land data as received before transforming it, so it can be reprocessed.\n- Monitor each run and record rows read and written.\n- For CDC, plan the initial full load, the ordering of changes and how deletes are applied.\n- Buffer real-time sources in a message store rather than writing straight to the target.",
+        "limitations": "- CDC needs access to the source's change log and must keep up before the source truncates it.\n- Query-based incremental loads miss intermediate states and hard deletes unless the source marks them.\n- Streaming adds operating effort and continuous compute.\n- Schema changes at the source need a defined handling path in every pattern.\n- Connector coverage and features differ by product and change often; check current documentation.",
+        "cost-drivers": "- Frequency of loads and whether compute runs continuously (streaming, CDC gateways) or on a schedule.\n- Data volume moved and network egress from the source location.\n- Number of sources and connectors to operate.\n- Staging storage for landed data.\n- Load on the source system from extracts."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Continuous versus scheduled compute",
+          "Data volume moved and network egress from the source",
+          "Number of sources and connectors",
+          "Staging storage for landed data"
+        ],
+        "tradeoffs": [
+          "Lower latency costs more to run and operate.",
+          "CDC gives every change with low source load but needs log access and careful ordering.",
+          "Batch is simple and cheap but late."
+        ]
+      },
+      "sources": [
+        { "title": "Big Data Architectures - Azure Architecture Center", "url": "https://learn.microsoft.com/en-us/azure/architecture/databases/guide/big-data-architectures", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Batch versus real-time paths; message ingestion store as buffer; orchestrated batch movement" },
+        { "title": "Choose a Stream Processing Technology - Azure Architecture Center", "url": "https://learn.microsoft.com/en-us/azure/architecture/data-guide/technology-choices/stream-processing", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "Stream ingestion options and CDC sources feeding streams" },
+        { "title": "Data ingestion patterns - AWS Cloud Data Ingestion Patterns and Practices", "url": "https://docs.aws.amazon.com/whitepapers/latest/aws-cloud-data-ingestion-patterns-practices/data-ingestion-patterns.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Homogeneous versus heterogeneous ingestion; full load and CDC with DMS" },
+        { "title": "Introduction to loading data | BigQuery | Google Cloud Documentation", "url": "https://docs.cloud.google.com/bigquery/docs/loading-data", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Batch load jobs, streaming with the Storage Write API, CDC replication" },
+        { "title": "Lakeflow Connect connector concepts", "url": "https://docs.databricks.com/aws/en/ingestion/lakeflow-connect/", "publisher": "Databricks", "sourceType": "vendor-official", "supports": "Database CDC, query-based incremental, SaaS, file and streaming connector types and their behaviour" }
+      ],
+      "corrections": [
+        "The old text said 'in batch or as a stream', omitting CDC and incremental batch from the summary although the concepts line mentioned CDC. All four patterns are now defined, with the difference between log-based CDC and query-based incremental loads stated.",
+        "'each with monitoring and replay' was too strong: replay is a property of landing raw data or of a retained stream, not of every pattern. It is now a best practice (land data as received so it can be reprocessed)."
+      ],
+      "unconfirmed": [
+        "'File transfer' as a separate ingestion pattern was not described as such by the sources; it is covered under batch (files loaded on a schedule or picked up incrementally from storage)."
+      ]
+    }
+  ],
+  "newItems": [
+    {
+      "slug": "cloud-migration-strategy-frameworks",
+      "type": "concept",
+      "title": "Migration strategy frameworks (the Rs)",
+      "summary": "AWS, Microsoft and Google each publish a list of per-workload migration strategies. The names overlap but the lists differ: AWS has 7 Rs including relocate; Microsoft CAF has no relocate and splits redesign into refactor, rearchitect and rebuild.",
+      "tags": ["migration", "7r", "concept"],
+      "sections": {
+        "concepts": "**AWS Prescriptive Guidance, 7 Rs** (an extension of Gartner's earlier 5 Rs):\n\n- Retire: decommission.\n- Retain: keep in the source environment for now.\n- Rehost (lift and shift): move without changes.\n- Relocate: hypervisor-level lift and shift.\n- Repurchase (drop and shop): switch to a different product, usually SaaS.\n- Replatform (lift and reshape): move with some optimisation.\n- Refactor / re-architect: change the architecture to use cloud-native features.\n\n**Microsoft CAF:** retire, rehost, replatform, refactor, rearchitect, rebuild, replace, retain.\n\n**Google Cloud:** rehost, replatform, refactor, re-architect, rebuild, repurchase.",
+        "how-it-works": "Mapping between the lists:\n\n- AWS *repurchase* = CAF *replace* = Google *repurchase*.\n- AWS *refactor / re-architect* covers what CAF separates into *refactor* (restructure code, same function), *rearchitect* (redesign architecture) and *rebuild* (new implementation).\n- AWS *relocate* has no CAF or Google equivalent in these lists.\n- Google's list covers ways to move; its Migration Center planning documentation also mentions retire and replace paths.\n\nEach workload gets one strategy, chosen from business goals and technical constraints. AWS says to classify each application before building the wave plan.",
+        "best-practices": "- Name the framework when you use a strategy term in a plan, especially 'refactor'.\n- AWS: common strategies for large migrations are rehost, replatform, relocate and retire; modernise after the move.\n- CAF: rehost only workloads not expected to need modernisation soon; replatform, refactor and rearchitect form a continuum of rising effort and value.\n- Retire and retain are real outcomes of assessment, not failures to migrate."
+      },
+      "attributes": {},
+      "relationships": [
+        ["related_to", "rehost-lift-and-shift"],
+        ["related_to", "replatform"],
+        ["related_to", "refactor-rebuild"],
+        ["related_to", "warehouse-migration-assessment"]
+      ],
+      "sources": [
+        { "title": "AWS Prescriptive Guidance glossary - AWS Prescriptive Guidance", "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/strategy-migration/apg-gloss.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "The 7 Rs, their aliases and their origin in Gartner's 5 Rs" },
+        { "title": "About the migration strategies - AWS Prescriptive Guidance", "url": "https://docs.aws.amazon.com/prescriptive-guidance/latest/large-migration-guide/migration-strategies.html", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Definitions of each R and the strategies recommended for large migrations" },
+        { "title": "Select your cloud migration strategies - Cloud Adoption Framework", "url": "https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/plan/select-cloud-migration-strategy", "publisher": "Microsoft", "sourceType": "standards-framework", "supports": "CAF strategy names and definitions" },
+        { "title": "Migrate to Google Cloud: Get started | Cloud Architecture Center | Google Cloud Documentation", "url": "https://docs.cloud.google.com/architecture/migration-to-gcp-getting-started", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "Google's six migration types" }
+      ]
+    }
+  ]
+}

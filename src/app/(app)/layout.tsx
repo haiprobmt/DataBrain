@@ -36,7 +36,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           <main className="main" id="main">
             {ctx.isDemo && (
               <div className="demo-banner" role="note">
-                <strong>Demo workspace.</strong> The seeded knowledge is illustrative demo content that has not been reviewed against its sources. Recommendations built on it are labelled accordingly — review and verify items before relying on them.
+                <strong>Demo workspace.</strong> The knowledge library was researched by an AI from official documentation and cites its sources, but no person has reviewed it. Every item is a draft, and recommendations built on it show reduced confidence — check items against their sources before relying on them.
               </div>
             )}
             {children}

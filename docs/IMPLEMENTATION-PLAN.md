@@ -70,7 +70,7 @@ Integrity rules implemented: UUID keys, workspace scope on every query, unique v
 
 ## Risks and open items
 
-- Demo knowledge is unreviewed. Every seeded item is a draft; nothing should be relied on until verified.
+- The knowledge library is AI-researched (web search of official documentation, page-level sources recorded) but not human-reviewed. Every item is a draft; nothing should be relied on until a person verifies it. Product names and limits in it will go stale.
 - Requirement extraction is vocabulary matching. It misses anything phrased outside its vocabulary (reported as unknown) and can misread unusual sentences; the review step is the control.
 - The in-process job runner loses a running job on restart (reported as failed, never as running forever). A multi-instance deployment needs a real queue.
 - Rate limiting and login throttling are in-memory, per process.

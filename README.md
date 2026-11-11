@@ -21,7 +21,7 @@ A personal Data & AI Architecture Intelligence Platform. It keeps a knowledge ba
 ## Read this before relying on it
 
 - **Generative AI is off by default.** With `LLM_PROVIDER=local`, requirement extraction is vocabulary and pattern matching over your own text and the AI Workspace only quotes stored passages. You can switch on Claude (see “Using Claude”). Artifacts and skills always come from fixed templates.
-- **The seeded knowledge is demo content.** It was written from general platform knowledge and has **not** been checked against the documentation pages it cites. Every item is seeded as a draft, flagged “Demo”, with no verification date.
+- **The starter knowledge library was researched by an AI, not reviewed by a person.** 54 of its 55 items were rewritten on 2026-11-11 from web searches of official documentation and cite the specific pages they rely on (212 in total), each with a note of what it supports. The research read search-result summaries and snippets, not whole pages. Every item loads as a draft labelled “AI-researched” with no verification date; check an item against its sources before you mark it reviewed or verified. One playbook has no vendor source and stays flagged “Demo”.
 - **Nothing is deployed.** The only deployment adapter is a simulator. It runs real read-only checks on the generated files (checksums, syntax, secret scan) and reports everything that needs a real platform as “not run”. An approved execution rehearses the approval flow and creates nothing.
 - **Scores are decision aids.** No prices, SKUs, network ranges or tenant IDs are ever generated; those are marked `TODO` or `PLACEHOLDER`.
 
@@ -78,6 +78,22 @@ Project briefs, requirements, component lists and retrieved knowledge passages a
 
 **Not verified:** this integration was type-checked, unit-tested with a stubbed client, and run end to end against a local mock of the Messages API. It has not been run against the real Anthropic API, because no key was available where it was built.
 
+### Loading the knowledge library into your own workspace
+
+`npm run db:seed` fills only the demo workspace. A workspace created with `user:create` starts empty; load the library into it with:
+
+```bash
+npm run knowledge:load -- you@example.com
+```
+
+In PowerShell, run the script directly:
+
+```powershell
+npx tsx --env-file-if-exists=.env scripts/load-knowledge.ts you@example.com
+```
+
+It is safe to run again after pulling updates: it adds new items and refreshes library items nobody has touched. Anything you have edited, reviewed or verified is left alone.
+
 ### Accounts without demo mode
 
 Set `DATABRAIN_DEMO_MODE=false` and a real `SESSION_SECRET`, then create a user:
@@ -105,7 +121,7 @@ DATABRAIN_NEW_PASSWORD="a-long-password" npm run user:create -- you@example.com 
 | `npm run lint` | Clean |
 | `npm run typecheck` | Clean |
 | `npm run test:unit` | 29 passed |
-| `npm run test:integration` | 22 passed |
+| `npm run test:integration` | 23 passed |
 | `npm run build` | Succeeded |
 | `npm run test:e2e` | 14 passed, including an axe scan of 14 pages and overflow checks at 820 px and 390 px |
 

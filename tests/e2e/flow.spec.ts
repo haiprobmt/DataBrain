@@ -82,7 +82,8 @@ test.describe("project → finder → approve → generate → skills → dry-ru
     await expect(table.getByRole("row")).toHaveCount(8);
     await expect(table).toContainText("Built on the target platform: Microsoft Fabric");
     await expect(first.getByText("Sources cited by this knowledge")).toBeVisible();
-    await expect(first.getByRole("link", { name: "Microsoft Fabric documentation" })).toBeVisible();
+    await expect(first.locator('a[href^="https://learn.microsoft.com/"]').first()).toBeVisible();
+    await expect(first.getByText("AI-researched")).toBeVisible();
     await expect(first.getByText("no prices are estimated")).toBeVisible();
     await expect(page.getByText(/scenarios? filtered out by hard constraints/)).toBeVisible();
 
@@ -264,7 +265,7 @@ test.describe("knowledge", () => {
     await page.getByLabel("Your question").fill("How does the medallion architecture work?");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     await expect(page.getByRole("link", { name: "Medallion architecture" })).toBeVisible();
-    await page.getByLabel("Your question").fill("zzzqqqxxx unknown topic");
+    await page.getByLabel("Your question").fill("zzzqqqxxx wwvvkkjj");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     await expect(page.getByText("DataBrain will not make up an answer")).toBeVisible();
   });

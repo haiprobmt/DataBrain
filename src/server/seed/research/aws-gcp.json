@@ -1,1 +1,789 @@
-{"cluster":"aws-gcp","researchedOn":"2026-11-11","items":[],"newItems":[]}
+{
+  "cluster": "aws-gcp",
+  "researchedOn": "2026-11-11",
+  "items": [
+    {
+      "slug": "aws-lakehouse-s3-glue-athena",
+      "summary": "A lakehouse on AWS: data lands in Amazon S3, the AWS Glue Data Catalog holds table metadata and Glue jobs transform the data, Lake Formation grants table, column, row and cell-level access, Athena serves serverless ad-hoc SQL and Amazon Redshift serves curated marts and can query the lake through external schemas.",
+      "sections": {
+        "context": "An organisation standardised on AWS wants an open data lake that several engines can read, with serverless ad-hoc SQL and a warehouse for dashboards.\n\nThe AWS Well-Architected Data Analytics Lens calls this a modern data architecture: a data lake at the centre, a data warehouse and other purpose-built stores around it, data moving in both directions, and governance applied in one place. The lens recommends a comprehensive data catalog and centralised access policies, because access rules maintained separately per store become complex and error-prone.",
+        "concepts": "- **Zones**: the Analytics Lens describes organising the lake into landing, raw, trusted and curated areas.\n- **Glue Data Catalog**: the shared metastore. Crawlers scan data stores, infer schemas and create or update tables; Glue ETL jobs, Athena and Redshift external schemas use the same table definitions. It can replace an Apache Hive metastore.\n- **Lake Formation data filters**: a filter attached to a SELECT grant restricts columns, rows (a filter expression), or both, which gives cell-level security.\n- **Open table formats**: object storage alone has no ACID guarantees; the lens points to Apache Iceberg, Apache Hudi and Delta Lake. Athena supports row-level inserts, updates, deletes and time travel on Iceberg tables.\n- **Athena workgroups**: separate teams or workloads and carry data-usage limits.",
+        "how-it-works": "S3 is the system of record. AWS DMS writes full-load and change files to S3; Amazon Data Firehose delivers streams from Kinesis Data Streams or Amazon MSK to S3 and can convert records to Parquet on the way.\n\nGlue crawlers or job code register tables in the Data Catalog. Glue Spark jobs move data from raw to curated zones; job bookmarks track which S3 objects were already processed so reruns pick up only new data.\n\nLake Formation vends short-lived, scoped credentials to registered S3 locations according to the permissions granted, so engines read only what the caller is allowed to see. Athena queries the lake directly. Redshift loads curated marts or reads lake tables through an external schema that points at a Data Catalog database.",
+        "implementation": "1. Create S3 buckets or prefixes per zone; keep Block Public Access on and set default encryption (SSE-KMS where a customer-managed key is required).\n2. Register the S3 locations with Lake Formation and connect it to IAM Identity Center if access is granted to workforce users and groups.\n3. Catalog sources with crawlers or explicit table definitions.\n4. Build ingestion: DMS for database CDC, Firehose for streams.\n5. Write Glue jobs that convert to compressed columnar files, partitioned on common query keys, or to Iceberg tables.\n6. Create Athena workgroups per team with per-query and workgroup data limits.\n7. Create Redshift external schemas for lake tables and load the marts that need warehouse performance.\n8. Define everything as code (Terraform or CloudFormation; Lake Formation data filters have a CloudFormation resource type).",
+        "best-practices": "- Partition on the keys queries filter by and store data in compressed columnar formats; both are Analytics Lens configuration guidance and directly reduce data scanned.\n- Use lifecycle policies to expire or tier old data.\n- With Athena partition projection, include predicates on all partition keys; on sparse tables projection can perform worse than catalog partitions.\n- Enable job bookmarks in the Glue job configuration and set a transformation context on reads and writes, otherwise bookmarks do not take effect.\n- Give each team its own Athena workgroup so limits and usage reporting are per team.\n- Grant data access through Lake Formation rather than per-bucket policies, so one grant covers every integrated engine.",
+        "security": "- **Identity**: Lake Formation can be connected to IAM Identity Center so permissions are granted to Identity Center users and groups; Athena and Redshift support trusted identity propagation. Client and driver support varies, so check current documentation.\n- **Data permissions**: Lake Formation grants at database, table, column, row and cell level through data filters. Redshift adds its own column grants, row-level security policies and dynamic data masking for data held in the warehouse.\n- **Encryption**: S3 encrypts every new object with SSE-S3 by default; switch the bucket default to SSE-KMS for customer-managed keys. Changing the default does not re-encrypt existing objects.\n- **Public access**: new buckets block public access by default and Block Public Access overrides bucket policies and object permissions.\n- **Audit**: the Analytics Lens lists CloudTrail alongside Lake Formation, IAM and KMS for access and security.",
+        "limitations": "- Operating several services well takes platform engineering effort; each engine has its own tuning and cost levers.\n- Lake Formation filtering has documented gaps: cell-level security is not supported on nested columns, views and resource links, and column filtering cannot be applied to partition keys. Review the data filtering limitations page before designing policies.\n- Athena per-query and workgroup limits are independent; concurrent queries can each stay under the per-query limit while the workgroup total is exceeded.\n- DMS does not alter previously written S3 files when a source column changes; schema reconciliation is the pipeline's job.\n- Rewinding a Glue job bookmark does not clean up target files.",
+        "cost-drivers": "- S3 storage volume and request counts; lifecycle rules reduce storage for old data.\n- Glue job runtime, measured in data processing units (DPUs) or workers, plus crawler runs.\n- Data scanned by Athena queries; partitioning, columnar formats and compression lower it, workgroup limits cap it.\n- Redshift compute (provisioned nodes or Serverless RPU-hours) and managed storage; on provisioned clusters, lake queries through Redshift Spectrum are charged on data scanned.\n- AWS KMS requests when buckets use SSE-KMS.\n- DMS replication capacity and streaming throughput.\n- Data transfer and NAT gateways for traffic that does not use VPC endpoints.",
+        "validation": "- Reconcile row counts from source to raw and to curated tables after each load.\n- Query a table as a restricted principal and confirm filtered columns and rows are not returned by Athena and by Redshift.\n- Confirm Block Public Access is on for every bucket and the default encryption type matches the key policy.\n- Run a query above the workgroup per-query limit and confirm it is cancelled.\n- Rerun a Glue job with bookmarks on and confirm no duplicate rows.\n- Apply a source delete and a source column change and confirm both reach the curated table as designed."
+      },
+      "attributes": {
+        "costDrivers": [
+          "S3 storage volume and request counts",
+          "Glue job runtime (DPUs or workers) and crawler runs",
+          "Data scanned by Athena queries",
+          "Redshift compute (provisioned nodes or Serverless RPU-hours) and managed storage",
+          "Redshift Spectrum data scanned on provisioned clusters",
+          "KMS requests when SSE-KMS is used",
+          "Data transfer and NAT gateways"
+        ],
+        "tradeoffs": [
+          "Composable services give flexibility but more integration work than a single-product platform.",
+          "Several query engines mean more than one place to tune performance and cost.",
+          "Central Lake Formation permissions simplify grants, but each engine's supported filter features must be checked."
+        ],
+        "limitations": [
+          "Many services to secure and monitor consistently.",
+          "Table format and catalog choices affect which engines can write.",
+          "Lake Formation cell-level security is not supported on nested columns, views and resource links.",
+          "Athena per-query and per-workgroup limits are independent and approximate under concurrency."
+        ],
+        "steps": [
+          "Set up accounts, VPC, VPC endpoints and private connectivity.",
+          "Create S3 zones (landing, raw, trusted, curated) with Block Public Access, default encryption and lifecycle rules.",
+          "Register S3 locations with Lake Formation and connect IAM Identity Center.",
+          "Catalog data in the Glue Data Catalog and grant Lake Formation permissions with data filters.",
+          "Build ingestion with AWS DMS for CDC and Amazon Data Firehose for streams.",
+          "Build Glue transformations to partitioned columnar or Iceberg tables.",
+          "Create Athena workgroups with data-usage limits.",
+          "Expose curated data through Athena and Redshift (external schemas and loaded marts).",
+          "Automate with Terraform or CloudFormation and validate permissions with a restricted principal."
+        ]
+      },
+      "tokenNotes": "sourceSystems 'salesforce', 'mongodb', 'api' and 'iot' were not confirmed by the pages found in this research (DMS pages found cover MySQL, Oracle, SQL Server and PostgreSQL sources); keep only if another source backs them. The diagram's streaming box says 'Kinesis': the delivery service is now documented as Amazon Data Firehose. The diagram's BI consumer says 'QuickSight': an AWS docs result in this session titles that guide 'Amazon Quick'; check the current product name before publishing.",
+      "sources": [
+        {
+          "title": "Modern data architecture - Data Analytics Lens",
+          "url": "https://docs.aws.amazon.com/wellarchitected/latest/analytics-lens/modern-data-architecture.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "standards-framework",
+          "supports": "Lake-centred architecture with warehouse and purpose-built stores, unified governance, zones, partitioning and columnar guidance."
+        },
+        {
+          "title": "Data filtering and cell-level security in Lake Formation - AWS Lake Formation",
+          "url": "https://docs.aws.amazon.com/lake-formation/latest/dg/data-filtering.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Column, row and cell-level security through data filters."
+        },
+        {
+          "title": "Configure per-query and per-workgroup data usage controls - Amazon Athena",
+          "url": "https://docs.aws.amazon.com/athena/latest/ug/workgroups-setting-control-limits-cloudwatch.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Athena workgroup per-query and workgroup-wide data-scanned limits and their independence."
+        },
+        {
+          "title": "Security best practices for Amazon S3 - Amazon Simple Storage Service",
+          "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Block Public Access defaults and override behaviour; default encryption."
+        },
+        {
+          "title": "AWS Glue concepts - AWS Glue",
+          "url": "https://docs.aws.amazon.com/glue/latest/dg/components-key-concepts.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Data Catalog, crawlers, ETL jobs using catalog tables as sources and targets."
+        },
+        {
+          "title": "Configuring default encryption - Amazon Simple Storage Service",
+          "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/default-bucket-encryption.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "SSE-S3 default; changing to SSE-KMS does not re-encrypt existing objects; KMS charges."
+        },
+        {
+          "title": "Tracking processed data using job bookmarks - AWS Glue",
+          "url": "https://docs.aws.amazon.com/glue/latest/dg/monitor-continuations.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Job bookmark behaviour, transformation context, rewind caveat."
+        },
+        {
+          "title": "Using crawlers to populate the Data Catalog - AWS Glue",
+          "url": "https://docs.aws.amazon.com/glue/latest/dg/add-crawler.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Crawlers create or update Data Catalog tables."
+        }
+      ],
+      "corrections": [
+        "Old text said Lake Formation applies 'table, column and row permissions'. The docs also describe cell-level security: a data filter that combines a column list with a row filter expression.",
+        "Old steps and diagram named 'Kinesis' for streaming ingestion. The delivery path to S3 is Amazon Data Firehose (current name), reading from Kinesis Data Streams or Amazon MSK.",
+        "Old text implied encryption and public-access blocking must be added. New S3 buckets already block public access and encrypt new objects with SSE-S3 by default; the design decision is whether to move to SSE-KMS, and changing the default does not re-encrypt existing objects.",
+        "Old text said Athena cost is reviewed 'after a load'. Athena workgroups provide per-query and workgroup-wide data-scanned limits that should be set up front; they are independent of each other.",
+        "Old text presented zones as 'raw, cleansed and curated'. The Data Analytics Lens names landing, raw, trusted and curated; the new text uses the lens terms."
+      ],
+      "unconfirmed": [
+        "That S3 and all analytics services in this design are reachable through VPC endpoints: not checked in this research, so the security section no longer states it as fact (it remains a design step).",
+        "EMR as an alternative transformation engine and CloudWatch as the monitoring service: not researched; left in the diagram only.",
+        "Compliance tokens (hipaa, pci, soc2, gdpr) and dr/ha: no compliance or resilience pages were reviewed."
+      ]
+    },
+    {
+      "slug": "amazon-redshift",
+      "summary": "AWS's data warehouse service. It runs as provisioned clusters (RA3 nodes separate compute from managed storage) or as Redshift Serverless (workgroups and namespaces, capacity in RPUs), and it can query data in Amazon S3 through external schemas backed by the AWS Glue Data Catalog.",
+      "sections": {
+        "concepts": "- **Provisioned cluster**: a set of nodes you size. RA3 node types use managed storage: hot data on local SSD, the rest offloaded automatically to Amazon S3, so compute and storage scale and are billed independently.\n- **Redshift Serverless**: a *workgroup* holds compute settings and is associated with a single *namespace* that holds the database objects. Capacity is measured in Redshift Processing Units (RPUs) with a base capacity and a maximum capacity per workgroup.\n- **External schema**: points to a database in the Glue Data Catalog so Redshift can query files in S3. On provisioned clusters these queries run on Redshift Spectrum, a server fleet separate from the cluster.\n- **Workload management (WLM)**: queues and concurrency. Automatic WLM adjusts concurrency to the workload.\n- **Concurrency scaling**: eligible queries overflow to a transient scaling cluster when a queue is full.",
+        "how-it-works": "On a provisioned cluster you choose a node type and count to meet performance needs and pay for managed storage separately. Elastic resize adds or removes nodes; changing the node type needs a classic resize.\n\nOn Serverless, the workgroup scales between its base and maximum RPU settings and bills for RPU-hours used.\n\nData arrives by loading from S3, by querying the lake in place through an external schema, or by streaming ingestion: a materialized view defined over a Kinesis Data Streams stream or an Amazon MSK topic, reached through an external schema. AWS recommends one streaming materialized view per stream or topic and a second materialized view on top when joins are needed.",
+        "best-practices": "- Use RA3 or Serverless when storage growth and compute need differ; the Analytics Lens lists decoupling storage from compute as a best practice.\n- Use automatic WLM unless you have a reason to manage queues by hand, and enable concurrency scaling on the queues that serve BI bursts.\n- Schedule pause and resume for provisioned clusters that are idle outside working hours.\n- On Serverless, set usage limits on RPU-hours with an action (log, alert, or turn off user queries) and a maximum capacity per workgroup.\n- Keep cold or rarely queried data in S3 and query it through an external schema instead of loading it.\n- Evaluate query performance before applying row-level security to large tables; RLS can limit query optimisation.",
+        "security": "- **Column-level**: GRANT and REVOKE on columns, without view-based workarounds.\n- **Row-level security**: policies attached to users or roles. They apply to SELECT, UPDATE and DELETE, not to INSERT or COPY.\n- **Dynamic data masking**: masks values at query time; masking can be conditional on another column. RLS is applied before masking.\n- **Lake data**: external schemas need IAM access to the Glue Data Catalog; with Lake Formation and IAM Identity Center, lake permissions can be granted to workforce users and groups.\n- **Federated permissions**: lets policies be defined once and enforced across Redshift warehouses in an account; user-defined functions in RLS and masking policies are not supported in that mode. Check current documentation for availability.",
+        "limitations": "- Provisioned clusters still need node type and count decisions; some RA3 node types require at least two nodes and each has a managed-storage limit per node (check current documentation).\n- A paused cluster accepts no connections or queries, scheduled actions do not run, and resume can take several minutes with slower queries while the cluster rehydrates.\n- Some clusters cannot be paused, for example those with automated snapshots turned off.\n- Dynamic data masking policies cannot be used with data sharing.\n- Streaming materialized views do not support joins directly, and Amazon MSK multi-VPC private connectivity is not supported for streaming ingestion.",
+        "cost-drivers": "- Provisioned: node type and node count, running hours, and managed storage used. Pausing suspends on-demand compute billing; storage is still charged.\n- Serverless: RPU-hours consumed, driven by base capacity, maximum capacity and query activity, plus storage.\n- Concurrency scaling usage beyond accrued credits.\n- Lake queries: on provisioned clusters Redshift Spectrum is charged on data scanned in S3; on Serverless there is no separate Spectrum charge because the work consumes RPUs.\n- Shared data lake tables in a datashare: the scan cost falls on the consumer account.\n- Streaming ingestion: extra materialized views on the same stream add consumers and duplicate ingestion cost."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Provisioned node type, node count and running hours",
+          "Managed storage used (RA3 and Serverless)",
+          "Serverless RPU-hours (base capacity, max capacity, activity)",
+          "Concurrency scaling usage",
+          "Redshift Spectrum data scanned on provisioned clusters"
+        ],
+        "tradeoffs": [
+          "Provisioned gives predictable capacity and pause/resume control but needs sizing; Serverless removes sizing but cost follows activity.",
+          "Querying S3 in place avoids loading but pushes cost and performance onto file layout and partitioning."
+        ],
+        "limitations": [
+          "Paused clusters cannot serve queries and take minutes to resume.",
+          "Dynamic data masking cannot be used with data sharing.",
+          "Row-level security can limit query optimisation on large tables.",
+          "Changing node type requires a classic resize."
+        ],
+        "compare": {
+          "Delivery model": "Managed service: provisioned clusters (RA3 nodes) or Redshift Serverless workgroups",
+          "Primary skills": "SQL",
+          "Storage format": "Redshift managed columnar storage (RA3: local SSD backed by S3); external tables on S3 via Glue Data Catalog, including Apache Iceberg",
+          "Billing model": "Provisioned: per node-hour plus managed storage, pausable. Serverless: per RPU-hour consumed plus storage",
+          "Clouds": "AWS"
+        }
+      },
+      "sources": [
+        {
+          "title": "Understanding how RA3 nodes separate compute and storage - Amazon Redshift",
+          "url": "https://docs.aws.amazon.com/redshift/latest/mgmt/managing-cluster-considerations-node-types.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "RA3 managed storage, independent scaling and billing of compute and storage, resize rules."
+        },
+        {
+          "title": "Compute capacity for Amazon Redshift Serverless - Amazon Redshift",
+          "url": "https://docs.aws.amazon.com/redshift/latest/mgmt/serverless-capacity.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "RPUs, base and maximum capacity per workgroup."
+        },
+        {
+          "title": "External schemas in Amazon Redshift Spectrum - Amazon Redshift",
+          "url": "https://docs.aws.amazon.com/redshift/latest/dg/c-spectrum-external-schemas.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "External schemas pointing to the Glue Data Catalog; IAM requirements."
+        },
+        {
+          "title": "Pausing and resuming a cluster - Amazon Redshift",
+          "url": "https://docs.aws.amazon.com/redshift/latest/mgmt/rs-mgmt-pause-resume-cluster.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Pause suspends compute billing, storage still charged, behaviour while paused, scheduling."
+        },
+        {
+          "title": "Considerations and limitations using RLS policies - Amazon Redshift",
+          "url": "https://docs.aws.amazon.com/redshift/latest/dg/t_rls_usage.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "RLS scope (SELECT/UPDATE/DELETE), ordering relative to dynamic data masking, performance note."
+        },
+        {
+          "title": "Billing for on-demand compute capacity - Amazon Redshift",
+          "url": "https://docs.aws.amazon.com/redshift/latest/mgmt/serverless-billing-on-demand.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Serverless RPU-hour billing and usage limits."
+        },
+        {
+          "title": "Workload management - Amazon Redshift",
+          "url": "https://docs.aws.amazon.com/redshift/latest/mgmt/workload-mgmt-config.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "WLM queues and concurrency scaling mode."
+        },
+        {
+          "title": "Implementing automatic WLM - Amazon Redshift",
+          "url": "https://docs.aws.amazon.com/redshift/latest/dg/automatic-wlm.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Automatic WLM adjusts concurrency."
+        }
+      ],
+      "corrections": [
+        "Old text: 'Clusters or serverless workgroups provide compute.' Now specific: provisioned RA3 nodes separate compute from managed storage (local SSD plus S3) and scale and bill them independently; Serverless uses workgroups (compute) associated with one namespace (data) and measures capacity in RPUs.",
+        "Old text: 'Redshift Spectrum queries external tables in S3.' Refined: on provisioned clusters lake queries run on Redshift Spectrum and are charged on data scanned; on Redshift Serverless there is no separate Spectrum charge.",
+        "Old billing text 'Provisioned or consumption' is now explicit: node-hours plus managed storage (compute billing stops while paused, storage does not) versus RPU-hours.",
+        "Added security features the old text omitted: column-level grants, row-level security and dynamic data masking, with the documented limit that masking policies cannot be used with data sharing."
+      ],
+      "unconfirmed": [
+        "Old limitation 'Provisioned clusters need … maintenance planning': maintenance windows were not researched; the new text keeps only the sizing point.",
+        "Zero-ETL integrations and data sharing mechanics: search results mentioned them only in patch notes, so they are not described."
+      ]
+    },
+    {
+      "slug": "gcp-bigquery-analytics",
+      "summary": "A serverless warehouse on Google Cloud: batch, CDC and streaming ingestion into BigQuery (Datastream, Pub/Sub, Storage Write API), SQL transformation with Dataform or dbt, access control with IAM, row access policies and policy tags, metadata and lineage in Knowledge Catalog (formerly Dataplex), and BI tools on top.",
+      "sections": {
+        "context": "A team on Google Cloud wants a warehouse without capacity planning and with built-in streaming ingestion.\n\nBigQuery separates storage from compute: the two layers operate and scale independently, storage is allocated automatically when data is loaded, and compute and storage are priced separately. The team's design work is therefore not sizing servers but choosing a compute pricing model, laying out tables so queries scan little data, and setting access and cost controls before users arrive.",
+        "concepts": "- **Resource hierarchy**: projects contain datasets; datasets contain tables, views, models and routines. A dataset's location is set at creation and cannot be changed, and all tables in one query must be in the same location.\n- **Compute**: measured in slots. On-demand pricing bills bytes processed; capacity pricing bills slot-hours from reservations in an edition (Standard, Enterprise, Enterprise Plus) with a baseline, autoscaling, or both.\n- **Partitioning and clustering**: partitions let queries skip whole segments; clustering sorts blocks within a table or partition.\n- **Fine-grained security**: row access policies, policy tags on columns, and data masking.\n- **Dataform**: SQLX files compiled into a dependency graph and run in BigQuery, with assertions as data tests.\n- **Knowledge Catalog**: the current name of Dataplex Universal Catalog; catalog, lineage and data quality.",
+        "how-it-works": "Files land in Cloud Storage and are batch-loaded. Datastream replicates database changes into BigQuery: in merge mode the table holds the latest state of each row (deletes remove the row) and needs a primary key; tables without one fall back to append-only, which keeps every change event. Applications stream rows with the Storage Write API. A Pub/Sub BigQuery subscription writes messages straight to a table with at-least-once delivery.\n\nDataform or dbt builds curated datasets from raw ones in dependency order and runs assertions or tests.\n\nBigQuery entries are populated automatically in Knowledge Catalog, and BigQuery reports lineage when the Data Lineage API is enabled. BI tools query curated datasets.",
+        "implementation": "1. Create folders and projects per environment; grant IAM roles to groups at project or dataset level.\n2. Create datasets in the required location with the encryption setting (Google-managed or customer-managed Cloud KMS key).\n3. Build ingestion: load jobs for files, Datastream for CDC, Storage Write API or a Pub/Sub BigQuery subscription for events.\n4. Partition large tables on the column queries filter by and cluster on frequent filter or join columns.\n5. Build Dataform or dbt models with assertions or tests; make downstream models depend on the assertions that must pass.\n6. Add row access policies, policy tags and masking rules.\n7. Choose on-demand or an editions reservation per workload.\n8. Set custom query quotas, a maximum bytes billed default for tools, and Cloud Billing budgets with alerts.\n9. If required, put the projects inside a VPC Service Controls perimeter, tested in dry-run mode first.",
+        "best-practices": "- Partition first, then cluster within partitions. Partitioning gives an upfront cost estimate; clustering adds finer block pruning.\n- Avoid many small partitions: they add metadata overhead.\n- Set maximum bytes billed on queries so a query whose estimate exceeds the limit fails without charge.\n- Use project-level and per-user custom query quotas as an extra safeguard on on-demand usage.\n- In Dataform, add an upstream table's assertions as dependencies of downstream actions; otherwise downstream actions still run when an assertion fails.\n- For Datastream merge tables, pick the staleness setting deliberately: fresher data means more frequent merges and higher cost.\n- Deduplicate downstream when using a Pub/Sub BigQuery subscription or the default write stream, since both are at-least-once.",
+        "security": "- **IAM**: roles granted at organisation, folder, project, dataset, or table/view level; access is additive and lower levels inherit from higher ones.\n- **Column-level access control**: policy tags from a taxonomy are attached to columns; only principals with the Fine-Grained Reader role see raw values, and a table-level grant does not override that.\n- **Data masking**: data policies return null, default or hashed values to principals with the Masked Reader role.\n- **Row-level security**: row access policies filter rows per user or group; masking is applied after row filtering.\n- **Encryption**: customer-managed Cloud KMS keys can protect datasets; the BigQuery encryption service account needs access to the key.\n- **VPC Service Controls**: a perimeter around the BigQuery API also covers the Storage, Reservation and Connection APIs. It is an API-level exfiltration control, not a private network, and its edition support should be checked in current documentation.",
+        "limitations": "- Query cost needs active management: unpartitioned tables and `SELECT *` scan everything under on-demand pricing.\n- A table can be partitioned on one column only, and an existing table cannot be converted to partitioned in place.\n- Cost of queries on clustered tables is known only after they run.\n- Custom quotas apply only to on-demand pricing and are approximate, not a strict limit.\n- Cloud Billing alert budgets notify; they do not cap spending.\n- Datastream handles source schema changes on a best-effort basis; dropped, reordered or retyped columns are documented risks, and a primary-key change requires dropping the table and backfilling again.\n- Lineage is retained for a limited period and column-level lineage does not cover nested fields.\n- Cross-cloud sources add egress and latency.",
+        "cost-drivers": "- Compute: bytes processed under on-demand pricing, or slot-hours under capacity pricing. Baseline and committed slots are billed whether or not jobs run; autoscaled slots are billed while allocated.\n- Storage: active versus long-term (unmodified tables or partitions are billed at a lower rate), and the dataset's logical or physical billing model. Under physical billing, time travel and fail-safe bytes are charged separately.\n- Streaming and CDC ingestion volume, and merge frequency on Datastream tables.\n- Knowledge Catalog processing for lineage and data quality scans.\n- Network egress to other clouds or regions.",
+        "validation": "- Reconcile loaded row counts against sources; for Datastream append-only tables check for duplicates on the event UUID.\n- Query as a restricted identity and confirm row policies filter rows and tagged columns are hidden or masked.\n- Dry-run the largest queries and confirm partition pruning reduces bytes processed.\n- Submit a query above the maximum bytes billed setting and confirm it fails without charge.\n- Confirm a failing Dataform assertion blocks the downstream tables that depend on it.\n- Confirm budget alert notifications reach the right people, and that a request from outside the service perimeter is denied."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Bytes processed by on-demand queries, or slot-hours from editions reservations (baseline, autoscale, commitments)",
+          "Storage volume: active vs long-term, logical vs physical billing model",
+          "Time travel and fail-safe storage under physical billing",
+          "Streaming and CDC ingestion volume and merge frequency",
+          "Lineage and data quality processing in Knowledge Catalog",
+          "Network egress to other clouds"
+        ],
+        "tradeoffs": [
+          "No infrastructure to size, but on-demand query cost follows usage directly.",
+          "Capacity reservations make spend predictable, but baseline slots are billed even when idle.",
+          "Datastream merge mode gives current-state tables; fresher data costs more merge work.",
+          "Best when most data already lives in Google Cloud."
+        ],
+        "limitations": [
+          "Unpartitioned tables and SELECT * patterns drive cost.",
+          "Custom query quotas are approximate and apply only to on-demand pricing.",
+          "Budgets alert but do not cap spend.",
+          "Dataset location cannot be changed after creation.",
+          "CDC schema-change handling is best-effort; primary-key changes need a re-backfill.",
+          "Cross-cloud sources add egress and latency."
+        ],
+        "steps": [
+          "Set up folders, projects and IAM groups per environment.",
+          "Create datasets with location and encryption (CMEK if required).",
+          "Build batch loads, Datastream CDC and streaming ingestion.",
+          "Partition and cluster the large tables.",
+          "Build SQL transformations with Dataform or dbt, with assertions as dependencies.",
+          "Apply row access policies, policy tags and masking.",
+          "Choose on-demand or an editions reservation per workload.",
+          "Set custom query quotas, maximum bytes billed, budgets and alerts.",
+          "Add a VPC Service Controls perimeter (dry run first) if data exfiltration control is required."
+        ]
+      },
+      "tokenNotes": "security 'private-networking': VPC Service Controls is an API perimeter, not private endpoints or VNet/VPC isolation; keep the token only if the Finder treats exfiltration perimeters as equivalent, otherwise remove. The diagram governance node label 'Dataplex' should read 'Knowledge Catalog (formerly Dataplex)'.",
+      "sources": [
+        {
+          "title": "Overview of BigQuery storage  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/storage_overview",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Separation of storage and compute; managed storage; separate pricing."
+        },
+        {
+          "title": "BigQuery destination  |  Datastream  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/datastream/docs/destination-bigquery",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Merge vs append-only write modes, primary keys, deletes, staleness setting."
+        },
+        {
+          "title": "Introduction to column-level access control  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/column-level-security-intro",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Policy tags, taxonomy, Fine-Grained Reader role."
+        },
+        {
+          "title": "Create custom query quotas  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/custom-quotas",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Project and per-user daily query quotas; on-demand only; approximate."
+        },
+        {
+          "title": "About metadata in Knowledge Catalog  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/dataplex/docs/catalog-overview",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Rename of Dataplex Universal Catalog to Knowledge Catalog; automatic BigQuery entries."
+        },
+        {
+          "title": "Understand BigQuery editions  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/editions-intro",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Editions, reservations, baseline and autoscaling."
+        },
+        {
+          "title": "BigQuery subscriptions  |  Pub/Sub  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/pubsub/docs/bigquery",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Pub/Sub BigQuery subscription uses the Storage Write API and is at-least-once."
+        },
+        {
+          "title": "Introduction to the Storage Write API (gRPC)  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/write-api-grpc",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Default stream at-least-once; committed streams with offsets for exactly-once."
+        }
+      ],
+      "corrections": [
+        "Old text named the governance product 'Dataplex'. Google's docs now call it Knowledge Catalog: Dataplex Universal Catalog was renamed on April 10, 2026; API, client library, CLI and IAM names are unchanged.",
+        "Old text: compute is 'on demand or from reserved slots'. Capacity pricing is now sold as BigQuery editions (Standard, Enterprise, Enterprise Plus) with reservations that have a baseline, autoscaling, or both; baseline and committed slots are billed even when idle.",
+        "Old text implied budgets and quotas are hard guardrails ('Set budgets, quotas and alerts', 'Confirm budget alerts fire'). Alert budgets do not cap spend, and custom query quotas are approximate and apply only to on-demand pricing; maximum bytes billed is the per-query control.",
+        "Old text presented streaming ingestion generically. A Pub/Sub BigQuery subscription is at-least-once only; exactly-once needs the Storage Write API with committed streams and offsets, or a Dataflow pipeline.",
+        "Old security text listed VPC Service Controls next to private networking. It is an API service perimeter; it also covers the BigQuery Storage, Reservation and Connection APIs when the BigQuery API is protected."
+      ],
+      "unconfirmed": [
+        "BigQuery Data Transfer Service as an ingestion path, Looker and Vertex AI as consumers, and Cloud Identity for single sign-on: not researched; they remain only in the diagram.",
+        "Compliance tokens (gdpr, hipaa, pci, soc2, data-residency): no compliance pages were reviewed. Data residency is partly supported by the fixed dataset location."
+      ]
+    },
+    {
+      "slug": "bigquery",
+      "summary": "Google Cloud's serverless data warehouse. Storage and compute are separate layers that scale independently; queries consume slots billed either per bytes processed (on-demand) or per slot-hour from reservations in a BigQuery edition.",
+      "sections": {
+        "concepts": "- **Hierarchy**: projects contain datasets; datasets contain tables, views, models and routines. Dataset location is fixed at creation; to move data you copy or recreate the dataset.\n- **Slots**: the unit of query compute. On-demand projects draw from a shared pool; capacity customers buy slots through reservations.\n- **Editions**: Standard, Enterprise and Enterprise Plus. A reservation can have an always-allocated baseline, an autoscaled amount, or both. Feature availability differs by edition; check current documentation.\n- **Partitioned tables**: split by a date/timestamp column, ingestion time or an integer range; one partitioning column per table.\n- **Clustered tables**: storage blocks sorted by chosen columns, in the order given.\n- **Storage billing model**: logical (uncompressed, the default) or physical (compressed) bytes, set per dataset.",
+        "how-it-works": "Google documents BigQuery as two layers that operate independently: a managed columnar storage layer and a query engine that allocates slots to queries. Storage is allocated automatically as data is loaded, and compute and storage are charged separately.\n\nA query that filters on the partitioning column scans only matching partitions; filters or aggregations on clustered columns scan only the relevant blocks.\n\nData enters through batch load jobs, the Storage Write API (the default stream is at-least-once; committed streams with offsets give exactly-once), Pub/Sub BigQuery subscriptions (at-least-once), or Datastream change data capture. BigQuery's own CDC ingestion applies upserts and deletes to tables with primary keys, with a staleness setting that trades freshness against merge cost.",
+        "best-practices": "- Partition large tables on the main filter column and cluster within partitions.\n- Avoid partitions that hold very little data each; many small partitions increase metadata and slow metadata access.\n- Select only needed columns and filter on the partition column.\n- Set maximum bytes billed so over-limit queries fail before running and without charge.\n- Use custom daily query quotas per project and per user on on-demand projects.\n- Use capacity reservations for steady or predictable workloads and on-demand for spiky or exploratory ones; review the choice from job history.\n- Check logical versus physical storage bytes in `INFORMATION_SCHEMA.TABLE_STORAGE` before changing a dataset's storage billing model.",
+        "security": "- IAM roles at organisation, folder, project, dataset and table/view level; grants are additive and inherited downward. Predefined dataset roles include Data Owner, Data Editor, Data Viewer and Metadata Viewer.\n- Column-level access control with policy tags; reading tagged columns needs the Fine-Grained Reader role.\n- Data masking through data policies (null, default value or hash) for the Masked Reader role.\n- Row-level security through row access policies; compatible with column-level security, with masking applied after row filtering.\n- Customer-managed encryption keys in Cloud KMS.\n- VPC Service Controls perimeters to restrict access to and movement of data through the API.",
+        "limitations": "- On-demand cost depends on bytes processed; without partition filters and column selection a query scans the full table.\n- The cost of a query on a clustered table can only be determined after it runs; for clustered tables the pre-run estimate is an upper bound.\n- Maximum bytes billed is not supported for federated queries.\n- Custom quotas are approximate and apply only to on-demand pricing.\n- Tables with column-level security cannot be copied across regions.\n- Tables under heavy CDC runtime merging have restrictions (for example on copies, snapshots and the Storage Read API); check current documentation.\n- A dataset's storage billing model can be changed only at intervals and takes time to apply.",
+        "cost-drivers": "- On-demand: bytes processed by each query.\n- Capacity: slot-hours. Baseline and committed slots are billed continuously; autoscaled slots while allocated. Commitments lower the rate in exchange for a term.\n- Storage: bytes stored, cheaper once a table or partition has gone unmodified for the long-term threshold (evaluated per partition).\n- Storage billing model: under physical billing, time travel and fail-safe bytes are charged separately; under logical billing they are included.\n- Streaming ingestion volume and CDC merge frequency.\n- Cross-region or cross-cloud data movement."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Bytes processed (on-demand)",
+          "Slot-hours: baseline, autoscaled and committed capacity (editions)",
+          "Stored bytes: active vs long-term, logical vs physical billing",
+          "Streaming ingestion and CDC merge frequency",
+          "Network egress"
+        ],
+        "tradeoffs": [
+          "On-demand needs no capacity decision but cost tracks every query; reservations give predictability but baseline slots bill when idle.",
+          "Physical storage billing can be cheaper for well-compressed data but charges time travel and fail-safe separately."
+        ],
+        "limitations": [
+          "Query cost depends on bytes processed unless capacity is reserved.",
+          "One partitioning column per table; existing tables cannot be partitioned in place.",
+          "Clustered-table query cost is known only after the query runs.",
+          "Dataset location cannot be changed after creation.",
+          "Custom quotas are approximate and on-demand only."
+        ],
+        "compare": {
+          "Delivery model": "Serverless (no clusters or nodes to manage)",
+          "Primary skills": "SQL",
+          "Storage format": "Managed columnar storage, separate from compute",
+          "Billing model": "On-demand per bytes processed, or capacity per slot-hour via editions reservations; storage billed separately",
+          "Clouds": "Google Cloud"
+        }
+      },
+      "sources": [
+        {
+          "title": "Understand BigQuery editions  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/editions-intro",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Editions, reservations, baseline and autoscaling slots, commitments."
+        },
+        {
+          "title": "Introduction to partitioned tables  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/partitioned-tables",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Partition types, pruning, single partitioning column, small-partition guidance."
+        },
+        {
+          "title": "Introduction to clustered tables  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/clustered-tables",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Clustering behaviour, combining with partitioning, cost known only after the query runs."
+        },
+        {
+          "title": "Estimate and control costs  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/best-practices-costs",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Maximum bytes billed, storage billing models, cost control practices."
+        },
+        {
+          "title": "Introduction to BigQuery row-level security  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/row-level-security-intro",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Row access policies and their interaction with column-level security."
+        },
+        {
+          "title": "Overview of BigQuery storage  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/storage_overview",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Independent storage and compute layers."
+        },
+        {
+          "title": "Understand slots  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/slots",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Slots under on-demand and capacity pricing."
+        },
+        {
+          "title": "Create custom query quotas  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/custom-quotas",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Custom quotas: on-demand only, approximate."
+        }
+      ],
+      "corrections": [
+        "Old text: 'Queries run on demand or against reserved slots.' Capacity pricing is delivered through BigQuery editions reservations with baseline and autoscaling slots; the compare 'Billing model' now says so and notes storage is billed separately.",
+        "Old limitation said cost depends on data scanned 'unless capacity is reserved'. Still true, but reservations have their own cost behaviour: baseline and committed slots are billed whether or not jobs run.",
+        "Old summary said 'compute is allocated per query and storage is managed' without stating the architectural point: storage and compute are independent layers that scale and are priced separately."
+      ],
+      "unconfirmed": []
+    },
+    {
+      "slug": "change-data-capture-ingestion",
+      "summary": "Capture inserts, updates and deletes from a source database's transaction log and deliver them downstream as change events, after an initial snapshot, instead of repeatedly extracting full tables. The target either keeps every event or merges them into a current-state table.",
+      "sections": {
+        "context": "Full extracts put load on the source and cannot give low latency on large tables. Log-based CDC reads the changes the database already records in its transaction log, so the source tables are not re-queried for every sync.\n\nManaged services implement the pattern (AWS DMS ongoing replication, Google Cloud Datastream) and so do open-source connectors (Debezium). They differ in where events land and in how much of the apply logic they do for you, so the pattern has to be designed end to end: snapshot, stream, apply, deletes, schema changes.",
+        "how-it-works": "1. **Snapshot**: the tool reads existing rows first. Debezium emits a read event per row during the snapshot.\n2. **Stream**: it then reads the log and emits an event per committed insert, update and delete.\n3. **Deliver**: events go to a stream, to files, or straight to a warehouse. AWS DMS writing to S3 puts an operation flag (I, U or D) as the first field of each CSV or Parquet record. Datastream in append-only mode writes each change with metadata such as a UUID, source timestamp and change type.\n4. **Apply**: either keep the event history or merge to current state. Datastream merge mode keeps only the latest row state in BigQuery and removes rows deleted at the source; it requires a primary key, otherwise the table is append-only.",
+        "prerequisites": "The source must expose its log in the form the tool needs. Examples from the AWS DMS documentation:\n\n- **MySQL-compatible**: binary logging on, row-based format with full row image, and binlog retention long enough for the task to read; the user needs replication privileges.\n- **Oracle**: supplemental logging at database level and on each replicated table, and archived logs retained long enough. Tables without a primary or unique key need all-column supplemental logging, which adds redo overhead.\n- **SQL Server**: full transaction logging through MS-Replication or SQL Server CDC.\n- **PostgreSQL**: logical replication slots.\n\nTables need a primary key for merge-style targets. Exact parameters are version-dependent; check current documentation.",
+        "best-practices": "- Decide per table whether consumers need history (append-only) or current state (merge), and document how deletes appear in each.\n- With Debezium on Kafka, keep tombstone events if topics are log-compacted: after a delete event the connector emits a record with the same key and a null value so compaction can remove earlier events for that key.\n- Deduplicate on the event identifier downstream; backfills and retries can produce duplicates in append-only targets.\n- Treat schema changes as a release: test column drops, renames, type changes and reordering on a non-production stream first.\n- Size log retention on the source to cover connector outages.\n- Monitor replication lag and set alerts on it.",
+        "limitations": "- Needs log access and configuration on the source, which may require DBA changes and elevated privileges.\n- Schema changes are not uniformly handled. AWS DMS to S3 supports a list of DDL operations but records no ALTER statement and does not rewrite earlier files; new records simply follow the new structure. Datastream re-reads source schemas periodically, so some events around a change can be processed incorrectly, and dropped, reordered or retyped columns are documented risks.\n- Changing a primary key on a Datastream-to-BigQuery table requires dropping the table and backfilling again.\n- A source TRUNCATE can remove the corresponding files and folders in a DMS S3 target.\n- Tombstones are synthetic; after a connector restart a delete event may not be followed by its tombstone.\n- Merge freshness has a cost: fresher current-state tables mean more merge work.",
+        "validation": "- After the snapshot, compare row counts and a checksum of key columns between source and target.\n- Insert, update and delete a test row and confirm each arrives with the expected operation flag or change type, and that the merged table ends in the right state.\n- Add a column and change a column type on a test table and confirm what the target and downstream models do.\n- Stop the connector for longer than a normal outage and confirm it resumes without gaps.\n- Check for duplicate event identifiers after a backfill."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Replication instance or stream capacity and running hours",
+          "Change volume (events processed and stored)",
+          "Merge frequency on current-state targets",
+          "Extra logging and log retention on the source database"
+        ],
+        "tradeoffs": [
+          "Lower latency and less source query load than full extracts, at the price of source-side log configuration and a continuously running pipeline.",
+          "Append-only targets keep history and are simple to write, but consumers must deduplicate and resolve deletes; merge targets are simple to read but need primary keys and merge compute."
+        ],
+        "limitations": [
+          "Needs log access and specific logging settings on the source.",
+          "Schema changes are handled on a best-effort basis and differ by tool and source.",
+          "Deletes arrive as flags, delete events or tombstones and must be applied deliberately.",
+          "Merge-style targets need primary keys."
+        ]
+      },
+      "sources": [
+        {
+          "title": "Using Amazon S3 as a target for AWS Database Migration Service - AWS Database Migration Service",
+          "url": "https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Target.S3.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "I/U/D operation flag in CDC files, supported DDL, no rewriting of earlier records, truncate behaviour."
+        },
+        {
+          "title": "Creating tasks for ongoing replication using AWS DMS - AWS Database Migration Service",
+          "url": "https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Task.CDC.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Ongoing replication (CDC) tasks and source log requirements."
+        },
+        {
+          "title": "BigQuery destination  |  Datastream  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/datastream/docs/destination-bigquery",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Merge and append-only modes, primary keys, delete handling, metadata fields, staleness."
+        },
+        {
+          "title": "Stream data from MySQL databases  |  Datastream  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/datastream/docs/sources-mysql",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Periodic schema re-fetch and the schema changes that can cause discrepancies."
+        },
+        {
+          "title": "Debezium connector for MySQL :: Debezium Documentation",
+          "url": "https://debezium.io/documentation/reference/stable/connectors/mysql.html",
+          "publisher": "Debezium project",
+          "sourceType": "community",
+          "supports": "Snapshot read events, delete events followed by tombstones, schema change topic."
+        },
+        {
+          "title": "Using a MySQL-compatible database as a source for AWS DMS - AWS Database Migration Service",
+          "url": "https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Source.MySQL.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Binlog settings, retention and privileges for CDC."
+        },
+        {
+          "title": "Using an Oracle database as a source for AWS DMS - AWS Database Migration Service",
+          "url": "https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Source.Oracle.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Supplemental logging and archive log retention."
+        },
+        {
+          "title": "Using a Microsoft SQL Server database as a source for AWS DMS - AWS Database Migration Service",
+          "url": "https://docs.aws.amazon.com/dms/latest/userguide/CHAP_Source.SQLServer.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "MS-Replication or CDC requirement."
+        }
+      ],
+      "corrections": [
+        "Old text: 'a merge process applies them to the target in order.' Not every CDC tool merges. AWS DMS to S3 writes change rows with an I/U/D flag and leaves the merge to your pipeline; Datastream offers both merge (needs a primary key) and append-only modes.",
+        "Old text omitted the initial snapshot. Log-based tools first read existing rows (Debezium emits read events), then switch to streaming changes.",
+        "Old text said only 'careful handling of schema changes and deletes'. Now specific: DMS does not rewrite earlier S3 records after a column change; Datastream schema-drift handling is best-effort with listed risky changes; Debezium deletes are a delete event plus a tombstone."
+      ],
+      "unconfirmed": [
+        "That events are always applied 'in order': ordering guarantees were not confirmed for any of the tools, so the new text does not claim it."
+      ]
+    },
+    {
+      "slug": "cost-guardrails",
+      "summary": "Configure budgets, alerts, idle shutdown, usage limits and workload isolation before production use. Cloud budgets on AWS, Google Cloud and Azure notify by default and do not stop spending, so pair them with controls that actually limit usage.",
+      "sections": {
+        "context": "Consumption-priced data platforms bill for whatever runs: an idle cluster, an unbounded query or a forgotten development environment. The first invoice is too late to find out.\n\nAll three hyperscaler frameworks treat this as a design-time concern. AWS Well-Architected has a best practice to implement cost controls and another to monitor cost proactively. Google Cloud's cost optimization pillar says to provision only what you need and to use quotas as spending boundaries. Azure's Well-Architected Framework has a checklist item on setting spending guardrails.",
+        "concepts": "- **Budget**: a target amount with alert thresholds on actual or forecast cost. On its own it is a notification.\n- **Budget automation**: something that reacts. AWS budget actions run automatically or after approval; Google Cloud budgets publish programmatic notifications to Pub/Sub; Azure budgets call action groups.\n- **Usage limit**: a control that stops or rejects work, such as an Athena workgroup data limit, BigQuery maximum bytes billed and custom query quotas, a Redshift Serverless usage limit, or a Snowflake resource monitor.\n- **Idle shutdown**: auto-suspend, auto-termination or scheduled pause of compute.\n- **Cost allocation**: tags (AWS, Azure) or labels (Google Cloud) that attribute spend to a team or environment.\n- **Anomaly detection**: alerts on unusual spend rather than on a fixed threshold.",
+        "how-it-works": "**AWS**: AWS Budgets alerts by email or SNS on actual or forecast cost and can be scoped by tag. Cost allocation tags must be activated before they appear in cost tools. Cost Anomaly Detection monitors services, accounts, tags or cost categories.\n\n**Google Cloud**: Cloud Billing budgets send alerts; the documentation states an alerts-only budget does not cap spending. Programmatic notifications let you automate a response. Quotas act as usage boundaries.\n\n**Azure**: Cost Management budgets fire on actual or forecast thresholds; resources are not affected and consumption is not stopped. Action groups can trigger automation.\n\n**Platform level**: Snowflake warehouses auto-suspend after inactivity and resource monitors suspend warehouses at a credit quota. Databricks compute auto-terminates after an idle period and compute policies can enforce that setting.",
+        "best-practices": "- Set a budget per environment and per team, with alerts on forecast as well as actual cost.\n- Route alerts to the people who can act, and wire at least one automated response for non-production.\n- Turn on idle shutdown everywhere it exists: warehouse auto-suspend with auto-resume, cluster auto-termination, scheduled pause for provisioned warehouses, off-hours shutdown for non-production VMs.\n- Put hard usage limits on query engines: per-query and per-workgroup data limits, maximum bytes billed, daily query quotas, serverless usage limits.\n- Isolate workloads (separate workgroups, warehouses, reservations or projects) so one team cannot consume another's budget.\n- Enforce tags or labels through infrastructure as code or policy, and activate them for cost reporting.\n- Use jobs compute rather than interactive compute for scheduled work.\n- Create non-production environments on demand and tear them down.",
+        "limitations": "- Budgets are not caps. On AWS, Google Cloud and Azure a default budget only notifies; stopping spend needs automation you build and test.\n- Billing data is delayed, so a threshold alert can arrive after the money is spent.\n- Usage limits are often approximate under concurrency: Athena workgroup totals can be exceeded by simultaneous queries, and BigQuery custom quotas are documented as approximate and apply only to on-demand pricing.\n- Azure action groups are not supported for budgets at every scope; check current documentation.\n- AWS Cost Anomaly Detection does not monitor AWS Marketplace products.\n- Idle time before auto-termination is still billed, and a suspended Snowflake warehouse can still incur cloud services cost.\n- Aggressive suspend settings trade cost for cold-start latency.",
+        "validation": "- Lower a test budget threshold and confirm the alert reaches the intended recipients and the automation runs.\n- Leave a cluster or warehouse idle and confirm it suspends or terminates within the configured time.\n- Run a query above the per-query limit and confirm it is rejected or cancelled.\n- Create a resource without the required tags or labels and confirm policy blocks or flags it.\n- Review a cost report grouped by tag or label and confirm no significant untagged spend.\n- Repeat these checks after platform changes; guardrails drift."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "Tighter limits protect the budget but can interrupt legitimate work; set them per workload, not globally.",
+          "Short auto-suspend windows save idle cost but add start-up latency for the next user.",
+          "Automated shutdown on budget breach is safe for non-production and risky for production; most teams alert only in production."
+        ],
+        "limitations": [
+          "Cloud budgets notify; they do not cap spending without added automation.",
+          "Billing data lags usage.",
+          "Query usage limits can be approximate under concurrency."
+        ],
+        "steps": [
+          "Define cost owners and a tag or label standard; activate tags for cost reporting.",
+          "Create budgets per environment and team with actual and forecast alert thresholds.",
+          "Enable anomaly detection where available.",
+          "Turn on auto-suspend, auto-termination or scheduled pause for all idle-capable compute.",
+          "Set per-query and per-workload usage limits on each query engine.",
+          "Isolate workloads into separate workgroups, warehouses, reservations or projects.",
+          "Wire and test automated responses for non-production budget breaches.",
+          "Review cost by tag or label on a fixed schedule."
+        ]
+      },
+      "sources": [
+        {
+          "title": "COST02-BP05 Implement cost controls - AWS Well-Architected Framework",
+          "url": "https://docs.aws.amazon.com/wellarchitected/2025-02-25/framework/cost_govern_usage_controls.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "standards-framework",
+          "supports": "Cost controls, AWS Budgets notifications and budget actions."
+        },
+        {
+          "title": "Create, edit, or delete budgets and budget alerts  |  Cloud Billing  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/billing/docs/how-to/budgets",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Alerts-only budgets do not cap spending; programmatic notifications."
+        },
+        {
+          "title": "Architecture strategies for setting spending guardrails - Microsoft Azure Well-Architected Framework",
+          "url": "https://learn.microsoft.com/en-us/azure/well-architected/cost-optimization/set-spending-guardrails",
+          "publisher": "Microsoft",
+          "sourceType": "standards-framework",
+          "supports": "Budgets with actual and forecast conditions, action groups, auto-shutdown, resource limits and policy."
+        },
+        {
+          "title": "Tutorial - Create and manage budgets - Microsoft Cost Management",
+          "url": "https://learn.microsoft.com/en-us/azure/cost-management-billing/costs/tutorial-acm-create-budgets",
+          "publisher": "Microsoft",
+          "sourceType": "vendor-official",
+          "supports": "Budget notifications do not affect resources or stop consumption."
+        },
+        {
+          "title": "Optimize resource usage  |  Cloud Architecture Center  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/architecture/framework/cost-optimization/optimize-resource-usage",
+          "publisher": "Google Cloud",
+          "sourceType": "standards-framework",
+          "supports": "Quotas as spending boundaries, quota alerts, autoscaling limits."
+        },
+        {
+          "title": "COST01-BP06 Monitor cost proactively - AWS Well-Architected Framework",
+          "url": "https://docs.aws.amazon.com/wellarchitected/2025-02-25/framework/cost_cloud_financial_management_proactive_process.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "standards-framework",
+          "supports": "Proactive cost monitoring."
+        },
+        {
+          "title": "Detecting unusual spend with AWS Cost Anomaly Detection - AWS Cost Management",
+          "url": "https://docs.aws.amazon.com/cost-management/latest/userguide/manage-ad.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Anomaly monitors; Marketplace exclusion."
+        },
+        {
+          "title": "Well-Architected Framework: Cost optimization pillar  |  Cloud Architecture Center  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/architecture/framework/cost-optimization",
+          "publisher": "Google Cloud",
+          "sourceType": "standards-framework",
+          "supports": "Provision only what you need; labels for cost allocation."
+        }
+      ],
+      "corrections": [
+        "Old text treated budgets as a guardrail in themselves. On AWS, Google Cloud and Azure a budget notifies and does not stop spending; Google and Microsoft state this explicitly. The item now separates notification (budgets) from enforcement (usage limits, idle shutdown, automation).",
+        "Old text covered only AWS and Google Cloud sources although Azure scenarios link to it. Azure Cost Management budgets, action groups and the Well-Architected spending-guardrails guidance are now included.",
+        "Old text said 'Tag resources for cost allocation'. On AWS, tags must also be activated as cost allocation tags; Google Cloud uses labels.",
+        "Old text named auto-suspend generically. It now names concrete controls: Athena workgroup limits, BigQuery maximum bytes billed and custom quotas, Redshift pause/resume and Serverless usage limits, Snowflake auto-suspend and resource monitors, Databricks auto-termination and compute policies."
+      ],
+      "unconfirmed": []
+    }
+  ],
+  "newItems": [
+    {
+      "slug": "aws-lake-formation",
+      "type": "technology",
+      "title": "AWS Lake Formation",
+      "summary": "AWS service that centralises permissions on data-lake tables registered in the AWS Glue Data Catalog. It grants access at database, table, column, row and cell level and vends short-lived, scoped credentials to registered Amazon S3 locations so integrated engines read only permitted data.",
+      "tags": [
+        "aws",
+        "governance",
+        "lake-formation",
+        "security"
+      ],
+      "sections": {
+        "concepts": "- **Registered location**: an S3 path placed under Lake Formation control.\n- **Grant**: a permission on a Data Catalog database, table or column given to a principal.\n- **Data filter**: attached when granting SELECT. All columns plus a row filter expression gives row-level security; a column include or exclude list with all rows gives column-level security; both together give cell-level security.\n- **Credential vending**: Lake Formation issues temporary, scoped credentials to registered S3 locations based on effective permissions.\n- **IAM Identity Center integration**: makes Lake Formation an Identity Center enabled application so grants can target workforce users and groups.",
+        "security": "Grant through Lake Formation rather than bucket policies so one definition applies across integrated engines such as Athena and Redshift. Test each policy as a restricted principal in every engine you use, because filter support has documented exceptions. With IAM Identity Center, users and groups cannot be made data lake administrators, and trusted identity propagation has key-type and client restrictions; check current documentation.",
+        "limitations": "- Cell-level security is not supported on nested columns, views and resource links.\n- Column filtering cannot be applied to partition keys.\n- Granting SELECT with the grant option and column filtering requires an include list.\n- Row filter expressions do not support array and map types.\n- There is a per-principal limit on data filters per table; check current documentation.\n- Column and row filtering cannot be combined for cell-level granularity on tables under federated databases."
+      },
+      "attributes": {
+        "limitations": [
+          "Cell-level security not supported on nested columns, views and resource links.",
+          "No column filtering on partition keys."
+        ],
+        "compare": {
+          "Delivery model": "Managed AWS service (permissions layer, no compute to size)",
+          "Primary skills": "IAM, SQL",
+          "Storage format": "None of its own; governs Glue Data Catalog tables over data in Amazon S3",
+          "Billing model": "Driven by the underlying storage and query services; check current documentation for Lake Formation charges",
+          "Clouds": "AWS"
+        }
+      },
+      "relationships": [
+        [
+          "part_of",
+          "aws-lakehouse-s3-glue-athena"
+        ],
+        [
+          "integrates_with",
+          "amazon-redshift"
+        ],
+        [
+          "related_to",
+          "least-privilege-access"
+        ]
+      ],
+      "sources": [
+        {
+          "title": "Data filtering and cell-level security in Lake Formation - AWS Lake Formation",
+          "url": "https://docs.aws.amazon.com/lake-formation/latest/dg/data-filtering.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Row, column and cell-level security with data filters."
+        },
+        {
+          "title": "Data filtering limitations - AWS Lake Formation",
+          "url": "https://docs.aws.amazon.com/lake-formation/latest/dg/data-filtering-notes.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Documented limits of data filters."
+        },
+        {
+          "title": "Connecting Lake Formation with IAM Identity Center - AWS Lake Formation",
+          "url": "https://docs.aws.amazon.com/lake-formation/latest/dg/connect-lf-identity-center.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Identity Center integration and scoped temporary credentials to registered S3 locations."
+        }
+      ]
+    },
+    {
+      "slug": "table-partitioning-and-clustering",
+      "type": "technique",
+      "title": "Partition and cluster large analytical tables",
+      "summary": "Lay out large tables so queries skip data they do not need: partition on the main filter column, then cluster or sort within partitions. On scan-priced engines such as BigQuery on-demand and Amazon Athena this is the main lever on both query time and cost.",
+      "tags": [
+        "performance",
+        "cost",
+        "bigquery",
+        "athena"
+      ],
+      "sections": {
+        "how-it-works": "A partitioned table is divided into segments by a column value. When a query filters on that column, the engine reads only matching partitions. In BigQuery, partitions are based on a date, timestamp or datetime column, on ingestion time, or on an integer range, and a table has one partitioning column.\n\nClustering sorts storage blocks by chosen columns, in the order given, so filters and aggregations on those columns read only the relevant blocks. BigQuery recommends combining the two: partition first, then cluster within each partition.\n\nOn S3 data lakes the AWS Data Analytics Lens gives the same guidance: partition on common query keys and store data in compressed columnar formats.",
+        "best-practices": "- Choose the partition column from actual query filters, usually a date.\n- Avoid partitions that hold very little data each; many small partitions increase table metadata and slow metadata access.\n- Use partitioning when you need a cost estimate before the query runs; clustered-table cost is only known afterwards.\n- With Athena partition projection, include predicates on all partition keys, and avoid projection on sparse tables.\n- Verify with a dry run or query statistics that the expected partitions are pruned.",
+        "limitations": "- In BigQuery an existing table cannot be converted to a partitioned table in place; partitioning is defined when the table is created.\n- Only one partitioning column per BigQuery table.\n- Partitioning on a column queries do not filter by adds overhead without benefit.\n- In Iceberg tables queried by Athena, a growing number of partitions increases the time to retrieve and process partition metadata."
+      },
+      "attributes": {
+        "tradeoffs": [
+          "Partitioning gives predictable pruning and pre-run cost estimates; clustering gives finer pruning without an upfront estimate.",
+          "Too-fine partitioning increases metadata and file counts."
+        ]
+      },
+      "relationships": [
+        [
+          "related_to",
+          "bigquery"
+        ],
+        [
+          "related_to",
+          "gcp-bigquery-analytics"
+        ],
+        [
+          "related_to",
+          "aws-lakehouse-s3-glue-athena"
+        ],
+        [
+          "related_to",
+          "cost-guardrails"
+        ]
+      ],
+      "sources": [
+        {
+          "title": "Introduction to partitioned tables  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/partitioned-tables",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Partition types, pruning, one partitioning column, small-partition guidance."
+        },
+        {
+          "title": "Introduction to clustered tables  |  BigQuery  |  Google Cloud Documentation",
+          "url": "https://docs.cloud.google.com/bigquery/docs/clustered-tables",
+          "publisher": "Google Cloud",
+          "sourceType": "vendor-official",
+          "supports": "Clustering, combining with partitioning, post-run cost."
+        },
+        {
+          "title": "Use partition projection with Amazon Athena - Amazon Athena",
+          "url": "https://docs.aws.amazon.com/athena/latest/ug/partition-projection.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "vendor-official",
+          "supports": "Partition projection behaviour, sparse-table caveat, predicates on all partition keys."
+        },
+        {
+          "title": "Configuration notes - Data Analytics Lens",
+          "url": "https://docs.aws.amazon.com/wellarchitected/latest/analytics-lens/configuration-notes.html",
+          "publisher": "Amazon Web Services",
+          "sourceType": "standards-framework",
+          "supports": "Partition on common query keys; columnar formats with compression."
+        }
+      ]
+    }
+  ]
+}

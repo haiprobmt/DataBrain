@@ -83,7 +83,7 @@ export function Sidebar({ demo }: { demo: boolean }) {
       </nav>
       <div className="side-footer">
         <b>{demo ? "Local demo mode" : "Workspace"}</b>
-        {demo ? "No paid AI provider is configured. Seed knowledge is unreviewed demo content." : "Local providers active."}
+        {demo ? "Shared demo account. The knowledge library is AI-researched and not human-reviewed." : "Local providers active."}
       </div>
     </aside>
   );
