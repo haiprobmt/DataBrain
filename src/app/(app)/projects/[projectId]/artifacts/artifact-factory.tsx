@@ -208,7 +208,7 @@ export function ArtifactFactory({ projectId, approved, artifacts, manifests, rea
                 </>
               ) : mode === "diff" ? (
                 previous === null ? <p className="muted">This is the first version; there is nothing to compare it with.</p> : (
-                  <pre className="diff" aria-label="Line changes from the previous version">
+                  <pre className="diff" tabIndex={0} aria-label="Line changes from the previous version">
                     {diffLines(previous, detail.revision.content).map((part, i) => (
                       <span key={i} className={part.added ? "diff-add" : part.removed ? "diff-del" : "diff-same"}>
                         {part.value.replace(/\n$/, "").split("\n").map((line) => `${part.added ? "+" : part.removed ? "-" : " "} ${line}`).join("\n")}
@@ -217,7 +217,7 @@ export function ArtifactFactory({ projectId, approved, artifacts, manifests, rea
                   </pre>
                 )
               ) : mode === "view" && detail.artifact.format === "markdown" ? (
-                <div style={{ maxHeight: 560, overflow: "auto" }}><Markdown text={detail.revision.content} /></div>
+                <div style={{ maxHeight: 560, overflow: "auto" }} tabIndex={0} role="region" aria-label="Document preview"><Markdown text={detail.revision.content} /></div>
               ) : (
                 <pre className="code" tabIndex={0}>{detail.revision.content}</pre>
               )}

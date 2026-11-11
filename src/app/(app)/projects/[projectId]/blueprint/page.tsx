@@ -30,7 +30,7 @@ export default async function BlueprintPage({ params, searchParams }: { params: 
       <Card title="Revisions" aside={<span className="muted">Approved revisions are immutable. Changes go into a new revision.</span>}>
         <div className="actions">
           {revisions.map((r) => (
-            <Link key={r.id} href={`?revision=${r.id}`} className="option" style={{ width: "auto", minWidth: 170 }} aria-current={r.id === revision.id ? "page" : undefined} aria-selected={r.id === revision.id}>
+            <Link key={r.id} href={`?revision=${r.id}`} className="option" style={{ width: "auto", minWidth: 170 }} aria-current={r.id === revision.id ? "page" : undefined}>
               <strong>Version {r.version}</strong> <StatusBadge status={r.status} />
               <div className="muted">{r.status === "approved" || r.status === "superseded" ? `Approved ${formatDate(r.approvedAt)}` : `Edited ${formatDate(r.updatedAt)}`}</div>
             </Link>

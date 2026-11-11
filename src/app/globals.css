@@ -15,7 +15,7 @@
   --danger: #df4b44;
   --shadow: 0 7px 26px rgba(30, 58, 99, 0.045);
   /* Darker orange for text on white: the brand orange is kept for fills and borders. */
-  --orange-text: #b45f00;
+  --orange-text: #a35500;
   --muted-text: #5f7190;
 }
 
@@ -44,6 +44,9 @@ button { cursor: pointer; }
 button:disabled { opacity: 0.6; cursor: not-allowed; }
 a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
+/* Links inside content are underlined so they are not identified by colour alone. */
+.main a:not(.btn):not(.task):not(.kpi):not(.option), .dialog a { text-decoration: underline; text-decoration-color: #a9c3e8; text-underline-offset: 2px; }
+.main .tabs a { text-decoration: none; }
 :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 6px; }
 h1, h2, h3, h4 { color: var(--navy); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -117,7 +120,7 @@ a.kpi:hover { text-decoration: none; border-color: #f6c791; }
 .linkbtn { background: none; border: 0; padding: 0; color: var(--blue); font-size: inherit; }
 .linkbtn:hover { text-decoration: underline; }
 
-.badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 20px; padding: 4px 10px; background: #f1f4f8; color: #56698a; font-size: 11px; white-space: nowrap; font-weight: 600; }
+.badge { display: inline-flex; align-items: center; gap: 6px; border-radius: 20px; padding: 4px 10px; background: #f1f4f8; color: #485b7c; font-size: 11px; white-space: nowrap; font-weight: 600; }
 .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .badge.ok { background: #e8f8f0; color: #0f6e4c; }
 .badge.warn { background: #fff2e6; color: #a55800; }
@@ -201,14 +204,14 @@ pre.code { background: #0f2146; color: #e6edf9; border-radius: 11px; padding: 14
 pre.diff { background: #fbfcfe; border: 1px solid var(--border); border-radius: 11px; padding: 10px 0; font-size: 12px; overflow: auto; max-height: 520px; margin: 0; }
 pre.diff span { padding: 0 12px; white-space: pre; }
 .option { border: 1px solid #e2eaf4; border-radius: 11px; background: #fff; padding: 13px; text-align: left; display: block; width: 100%; color: inherit; }
-.option.active, .option[aria-pressed="true"], .option[aria-selected="true"] { border: 1.5px solid var(--orange); background: #fff9f2; }
+.option.active, .option[aria-pressed="true"], .option[aria-current="page"] { border: 1.5px solid var(--orange); background: #fff9f2; }
 .checkrow { display: flex; gap: 10px; align-items: flex-start; padding: 9px 4px; border-bottom: 1px solid #eef3f9; }
 .checkrow:last-child { border-bottom: 0; }
 .checkrow input { margin-top: 3px; accent-color: var(--orange); width: 16px; height: 16px; }
 .checkrow strong { display: block; font-size: 12.5px; color: #203e6c; }
-.checkrow span { font-size: 11.5px; color: var(--muted-text); }
-.canvas { height: 620px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #fbfcfe; }
-.three { display: grid; grid-template-columns: 230px minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+.checkrow span:not(.badge):not(.demo-tag) { font-size: 11.5px; color: var(--muted-text); }
+.canvas { height: 680px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: #fbfcfe; }
+.three { display: grid; grid-template-columns: 210px minmax(0, 1fr) 290px; gap: 14px; align-items: start; }
 .outline { display: grid; gap: 2px; }
 .outline button { text-align: left; border: 0; background: none; padding: 7px 9px; border-radius: 8px; font-size: 12px; color: #3d5d8d; border-left: 3px solid transparent; }
 .outline button:hover { background: #f8fafe; }

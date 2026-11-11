@@ -200,8 +200,8 @@ test.describe("project → finder → approve → generate → skills → dry-ru
   });
 
   test("the project is reachable from every delivery module and nothing logged a console error", async () => {
-    for (const module of ["blueprint", "artifacts", "skills", "deployments"]) {
-      await page.goto(`/studio/${module}`);
+    for (const area of ["blueprint", "artifacts", "skills", "deployments"]) {
+      await page.goto(`/studio/${area}`);
       await expect(page.getByRole("link", { name: /E2E retail analytics/ })).toBeVisible();
     }
     await page.goto(projectUrl);
@@ -291,5 +291,27 @@ test.describe("knowledge", () => {
     expect(crossSite.status()).toBe(403);
     const health = await request.get("/api/health");
     expect(await health.json()).toEqual({ status: "ok", database: "ok" });
+  });
+});
+
+test.describe("accessibility", () => {
+  test("core pages have no serious or critical axe violations", async ({ page }) => {
+    const { default: AxeBuilder } = await import("@axe-core/playwright");
+    const projects = await (await page.request.get("/api/projects")).json();
+    const projectId = projects.items.find((p: { name: string }) => p.name === "E2E retail analytics")?.id as string | undefined;
+    const paths = ["/", "/finder", "/knowledge", "/knowledge/medallion-architecture", "/knowledge/new?type=scenario", "/graph", "/compare", "/workspace", "/settings"];
+    if (projectId) paths.push(`/projects/${projectId}`, `/projects/${projectId}/blueprint`, `/projects/${projectId}/artifacts`, `/projects/${projectId}/skills`, `/projects/${projectId}/deployments`);
+    const problems: string[] = [];
+    for (const path of paths) {
+      await page.goto(path);
+      await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+      await page.waitForLoadState("networkidle");
+      // The third-party diagram and graph canvases are excluded; each has a list alternative that is checked.
+      const results = await new AxeBuilder({ page }).exclude(".react-flow").exclude("canvas").analyze();
+      for (const v of results.violations.filter((x) => x.impact === "serious" || x.impact === "critical")) {
+        problems.push(`${path.replace(/[0-9a-f-]{36}/, ":id")}: ${v.id} (${v.nodes.length}) e.g. ${[...new Set(v.nodes.map((n) => n.html.slice(0, 110)))].slice(0, 4).join(" || ")}`);
+      }
+    }
+    expect(problems).toEqual([]);
   });
 });

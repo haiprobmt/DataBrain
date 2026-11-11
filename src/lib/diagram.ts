@@ -66,15 +66,15 @@ export function toDrawio(diagram: DiagramModel, title: string): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<mxfile host="DataBrain"><diagram name="${xml(title)}"><mxGraphModel dx="1200" dy="800" grid="1" gridSize="10"><root>${cells.join("")}</root></mxGraphModel></diagram></mxfile>\n`;
 }
 
-/** Lay nodes out in columns by kind. Used for templates and generated proposals. */
+/** Lay nodes out top to bottom, one row per stage of the data path. Used for templates and generated proposals. */
 export function autoLayout(nodes: Omit<DiagramNode, "position">[]): DiagramNode[] {
-  const columns: DiagramNode["kind"][][] = [["source"], ["ingestion", "network"], ["storage", "security"], ["processing", "governance"], ["serving", "operations"], ["consumer", "other"]];
+  const rows: DiagramNode["kind"][][] = [["source"], ["ingestion", "network"], ["storage", "security"], ["processing", "governance"], ["serving", "operations"], ["consumer", "other"]];
   const counters = new Map<number, number>();
   return nodes.map((node) => {
-    const col = Math.max(columns.findIndex((kinds) => kinds.includes(node.kind)), 0);
-    const row = counters.get(col) ?? 0;
-    counters.set(col, row + 1);
-    return { ...node, position: { x: 40 + col * 250, y: 40 + row * 120 } };
+    const row = Math.max(rows.findIndex((kinds) => kinds.includes(node.kind)), 0);
+    const column = counters.get(row) ?? 0;
+    counters.set(row, column + 1);
+    return { ...node, position: { x: 40 + column * 225, y: 40 + row * 120 } };
   });
 }
 

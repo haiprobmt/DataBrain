@@ -141,8 +141,8 @@ export function SkillFactory({ projectId, approved, skills, packages, readOnly }
                   </div>
                 </>
               ) : file.endsWith(".md") ? (
-                <div style={{ maxHeight: 520, overflow: "auto" }}>
-                  {file === "SKILL.md" && <pre className="code" style={{ marginBottom: 12, maxHeight: 130 }}>{skill.skillMd.match(/^---[\s\S]*?---/)?.[0] ?? "(no frontmatter)"}</pre>}
+                <div style={{ maxHeight: 520, overflow: "auto" }} tabIndex={0} role="region" aria-label="File preview">
+                  {file === "SKILL.md" && <pre className="code" tabIndex={0} style={{ marginBottom: 12, maxHeight: 130 }}>{skill.skillMd.match(/^---[\s\S]*?---/)?.[0] ?? "(no frontmatter)"}</pre>}
                   <Markdown text={content.replace(/^---[\s\S]*?---\s*/, "")} />
                 </div>
               ) : (

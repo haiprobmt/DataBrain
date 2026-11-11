@@ -104,7 +104,7 @@ function RunView({ projectId, runId, onSettled }: { projectId: string; runId: st
       </div>
       <details>
         <summary className="muted" style={{ cursor: "pointer" }}>Run log ({run.log.length} lines)</summary>
-        <pre className="code">{run.log.map((l) => `${l.at.slice(11, 19)} ${l.level.toUpperCase().padEnd(5)} ${l.stage ? `[${l.stage}] ` : ""}${l.message}`).join("\n")}</pre>
+        <pre className="code" tabIndex={0}>{run.log.map((l) => `${l.at.slice(11, 19)} ${l.level.toUpperCase().padEnd(5)} ${l.stage ? `[${l.stage}] ` : ""}${l.message}`).join("\n")}</pre>
       </details>
     </div>
   );

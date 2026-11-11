@@ -57,11 +57,11 @@ export function Sidebar({ demo }: { demo: boolean }) {
   const path = usePathname();
   return (
     <aside className="side">
-      <Link href="/" className="brand" aria-label="DataBrain by DataLabsIQ — Mission Control">
+      <Link href="/" className="brand">
         <Image src="/brand/datalabsiq-logo.png" alt="DataLabsIQ" width={45} height={47} priority />
         <div>
           <strong>DataBrain</strong>
-          <small>by DATALABS<span style={{ color: "#a87800" }}>IQ</span></small>
+          <small>by DATALABS<span style={{ color: "#8a6300" }}>IQ</span></small>
         </div>
       </Link>
       <nav className="nav" aria-label="Main">

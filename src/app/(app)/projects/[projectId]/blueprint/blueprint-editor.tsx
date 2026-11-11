@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, Dialog, downloadText, errorMessage, useAction, useUnsavedWarning } from "@/components/client";
 import { Markdown } from "@/components/markdown";
-import { Badge, CandidateLabel, OriginBadge, StatusBadge } from "@/components/ui";
+import { CandidateLabel, OriginBadge, StatusBadge } from "@/components/ui";
 import { NODE_KINDS, nodeKindColor } from "@/lib/catalog";
 import { edgeId, newNodeId, toDrawio, toMermaid, type DiagramIssue } from "@/lib/diagram";
 import { INTAKE_FIELDS } from "@/lib/intake";
@@ -34,11 +34,11 @@ function FlowNode({ data, selected }: NodeProps<Node<FlowNodeData>>) {
   const n = data.node;
   return (
     <div className={cx("flow-node", selected && "selected")} style={{ borderLeftColor: nodeKindColor(n.kind) }}>
-      <Handle type="target" position={Position.Left} />
+      <Handle type="target" position={Position.Top} />
       <span className="kind">{n.kind}{n.provenance.origin !== "reference" ? ` · ${n.provenance.origin}` : ""}</span>
       <b>{n.label}</b>
       {n.technology && <small>{n.technology}</small>}
-      <Handle type="source" position={Position.Right} />
+      <Handle type="source" position={Position.Bottom} />
     </div>
   );
 }
@@ -86,6 +86,7 @@ function Canvas({ diagram, editable, selection, onSelect, onMove, onConnect, onD
         nodesConnectable={editable}
         deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
         fitView
+        fitViewOptions={{ padding: 0.08 }}
         minZoom={0.2}
         proOptions={{ hideAttribution: false }}
       >
@@ -222,7 +223,7 @@ export function BlueprintEditor({ projectId, revision, issues, readOnly, canAppr
                 <button type="button" className="btn mini" onClick={() => downloadText(`${fileBase}.mmd`, toMermaid(diagram))}>Export Mermaid</button>
                 <button type="button" className="btn mini" onClick={() => downloadText(`${fileBase}.drawio`, toDrawio(diagram, title), "application/xml")}>Export draw.io</button>
                 <button type="button" className="btn mini" onClick={() => downloadText(`${fileBase}.reactflow.json`, JSON.stringify(diagram, null, 2), "application/json")}>Export JSON</button>
-                <span className="muted">{editable ? "Drag to move · drag between the side handles to connect · Delete removes the selection" : "Read-only diagram"}</span>
+                <span className="muted">{editable ? "Drag to move · drag from a bottom handle to a top handle to connect · Delete removes the selection" : "Read-only diagram"}</span>
               </div>
               <ReactFlowProvider>
                 <Canvas diagram={diagram} editable={editable} selection={selection} onSelect={setSelection} onMove={move} onConnect={connect} onDelete={remove} />
@@ -300,7 +301,7 @@ export function BlueprintEditor({ projectId, revision, issues, readOnly, canAppr
                 </div>
               )}
               <p className="muted">Select a component or connection to edit its properties, or a section in the outline to edit its text.</p>
-              <div className="actions">{NODE_KINDS.map((k) => <Badge key={k.key}><span style={{ color: k.color }}>{k.label}</span></Badge>)}</div>
+              <ul className="actions" aria-label="Component types" style={{ listStyle: "none", padding: 0, margin: 0, gap: "4px 12px" }}>{NODE_KINDS.map((k) => <li key={k.key} className="muted" style={{ display: "flex", alignItems: "center", gap: 5 }}><span aria-hidden style={{ width: 10, height: 10, borderRadius: 3, background: k.color }} />{k.label}</li>)}</ul>
             </div>
           )}
         </aside>
