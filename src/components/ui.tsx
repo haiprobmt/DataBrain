@@ -76,10 +76,11 @@ export function OriginBadge({ origin, edited }: { origin: string; edited?: boole
 }
 
 const STATUS_TONES: Record<string, Tone> = {
-  succeeded: "ok", passed: "ok", approved: "ok", accepted: "ok", active: "ok", valid: "ok",
-  failed: "err", rejected: "err", revoked: "err", invalid: "err",
-  running: "info", queued: "info", planned: "info", proposed: "info", reviewed: "info",
-  warning: "warn", awaiting_approval: "warn", draft: "neutral", skipped: "neutral", superseded: "neutral", archived: "neutral", cancelled: "neutral", consumed: "neutral",
+  succeeded: "ok", passed: "ok", approved: "ok", accepted: "ok", active: "ok", valid: "ok", completed: "ok", resolved: "ok",
+  failed: "err", rejected: "err", revoked: "err", invalid: "err", blocked: "err",
+  running: "info", queued: "info", planned: "info", proposed: "info", reviewed: "info", in_progress: "info", mitigating: "info",
+  warning: "warn", awaiting_approval: "warn", pending_approval: "warn", requested: "warn", on_hold: "warn", at_risk: "warn", open: "warn",
+  draft: "neutral", skipped: "neutral", superseded: "neutral", archived: "neutral", cancelled: "neutral", consumed: "neutral", not_started: "neutral", pending: "neutral", waived: "neutral", withdrawn: "neutral", closed: "neutral",
 };
 
 export function StatusBadge({ status, label }: { status: string; label?: string }) {

@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 import { DemoTag, StatusBadge } from "@/components/ui";
 import { requireCtx } from "@/server/auth";
 import { getApprovedRevision } from "@/server/services/blueprint";
+import { getLifecycleStatus } from "@/server/services/lifecycle";
 import { getProject } from "@/server/services/projects";
+import { LIFECYCLE_NOT_STARTED_LABEL, statusLabel } from "@/lib/lifecycle";
 import { ProjectTabs } from "./project-tabs";
 import { notFound } from "next/navigation";
 import { AppError } from "@/server/errors";
@@ -14,7 +16,7 @@ export default async function ProjectLayout({ children, params }: { children: Re
     if (error instanceof AppError && error.code === "not_found") notFound();
     throw error;
   });
-  const approved = await getApprovedRevision(ctx, projectId);
+  const [approved, lifecycleStatus] = await Promise.all([getApprovedRevision(ctx, projectId), getLifecycleStatus(ctx, projectId)]);
   return (
     <>
       <div className="pagehead" style={{ marginBottom: 12 }}>
@@ -25,6 +27,7 @@ export default async function ProjectLayout({ children, params }: { children: Re
         </div>
         <div className="actions">
           {project.status === "archived" && <StatusBadge status="archived" />}
+          <StatusBadge status={lifecycleStatus ?? "not_started"} label={lifecycleStatus ? `Lifecycle: ${statusLabel(lifecycleStatus).toLowerCase()}` : LIFECYCLE_NOT_STARTED_LABEL} />
           <StatusBadge status={project.requirementsStatus === "approved" ? "approved" : "draft"} label={`Requirements: ${project.requirementsStatus === "none" ? "not started" : project.requirementsStatus}`} />
           {approved ? <StatusBadge status="approved" label={`Blueprint v${approved.version} approved`} /> : <StatusBadge status="draft" label="No approved blueprint" />}
         </div>

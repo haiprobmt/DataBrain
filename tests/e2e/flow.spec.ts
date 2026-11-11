@@ -33,7 +33,7 @@ test.describe("project → finder → approve → generate → skills → dry-ru
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Mission Control" })).toBeVisible();
     await expect(page.getByRole("img", { name: "DataLabsIQ" })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link")).toHaveCount(15);
+    await expect(page.getByRole("navigation", { name: "Main" }).getByRole("link")).toHaveCount(17);
     await expect(page.getByText("Demo workspace.")).toBeVisible();
     const orange = await page.getByRole("link", { name: "Start a project" }).evaluate((el) => getComputedStyle(el).backgroundColor);
     expect(orange).toBe("rgb(242, 138, 0)");
@@ -47,7 +47,8 @@ test.describe("project → finder → approve → generate → skills → dry-ru
     await page.getByLabel("Project name").fill("E2E retail analytics");
     await page.getByLabel("Project context").fill(BRIEF);
     await page.getByRole("button", { name: "Create project" }).click();
-    await expect(page).toHaveURL(/\/projects\/[0-9a-f-]{36}$/);
+    // Requirements & Finder moved from the project root to its own tab; the root is now the project overview.
+    await expect(page).toHaveURL(/\/projects\/[0-9a-f-]{36}\/requirements$/);
     projectUrl = page.url();
     await expect(page.getByRole("heading", { name: "E2E retail analytics" })).toBeVisible();
     await expect(page.getByText("Approve the requirements above to run the Finder.")).toBeVisible();
@@ -301,7 +302,7 @@ test.describe("accessibility", () => {
     const projects = await (await page.request.get("/api/projects")).json();
     const projectId = projects.items.find((p: { name: string }) => p.name === "E2E retail analytics")?.id as string | undefined;
     const paths = ["/", "/finder", "/knowledge", "/knowledge/medallion-architecture", "/knowledge/new?type=scenario", "/graph", "/compare", "/workspace", "/settings"];
-    if (projectId) paths.push(`/projects/${projectId}`, `/projects/${projectId}/blueprint`, `/projects/${projectId}/artifacts`, `/projects/${projectId}/skills`, `/projects/${projectId}/deployments`);
+    if (projectId) paths.push(`/projects/${projectId}`, `/projects/${projectId}/requirements`, `/projects/${projectId}/blueprint`, `/projects/${projectId}/artifacts`, `/projects/${projectId}/skills`, `/projects/${projectId}/deployments`);
     const problems: string[] = [];
     for (const path of paths) {
       await page.goto(path);

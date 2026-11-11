@@ -25,7 +25,7 @@ export function NewProjectForm() {
         setFieldErrors({});
         try {
           const { id } = await api<{ id: string }>("/api/projects", { body: form });
-          router.push(`/projects/${id}`);
+          router.push(`/projects/${id}/requirements`);
         } catch (e) {
           setError(errorMessage(e));
           if (e instanceof ApiError) setFieldErrors(e.fieldErrors);

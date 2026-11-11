@@ -17,7 +17,7 @@ export default async function BlueprintPage({ params, searchParams }: { params: 
   if (revisions.length === 0) {
     return (
       <Card>
-        <EmptyState title="No blueprint yet" action={<Link className="btn primary" href={`/projects/${projectId}#candidates`}>Go to the Architecture Finder</Link>}>
+        <EmptyState title="No blueprint yet" action={<Link className="btn primary" href={`/projects/${projectId}/requirements#candidates`}>Go to the Architecture Finder</Link>}>
           A blueprint starts from a candidate. Approve the requirements, run the Finder, then choose “Create blueprint from this” on the candidate you want to develop.
         </EmptyState>
       </Card>

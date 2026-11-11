@@ -1262,3 +1262,9 @@ export function stageResult(view: LifecycleView, stageId: string) {
     lifecycle: { status: view.lifecycle?.status ?? null, percent: view.progress?.percent ?? 0, currentStageId: view.progress?.currentStageId ?? null },
   };
 }
+
+/** The lifecycle status of a project, or null when no lifecycle was started. For headers that need nothing else. */
+export async function getLifecycleStatus(ctx: Ctx, projectId: string): Promise<LifecycleStatus | null> {
+  const project = await getProject(ctx, projectId);
+  return (await findLifecycle(project))?.status ?? null;
+}

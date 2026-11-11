@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpen, Boxes, FileStack, GitCompareArrows, History, Home, LayoutTemplate, MessagesSquare, Network, PackageCheck, Rocket, Route, Search, Settings, Share2, Sparkles, Wand2 } from "lucide-react";
+import { BookOpen, Boxes, FileStack, FolderKanban, GitCompareArrows, History, Home, LayoutTemplate, ListChecks, MessagesSquare, Network, PackageCheck, Rocket, Route, Search, Settings, Share2, Sparkles, Wand2 } from "lucide-react";
 import type { ComponentType } from "react";
 
 interface NavItem {
@@ -15,12 +15,25 @@ interface NavItem {
 
 const project = (module: string) => (path: string) => path === `/studio/${module}` || new RegExp(`^/projects/[^/]+/${module}`).test(path);
 
+/** Project pages that belong to the lifecycle workspace rather than to one delivery module. */
+const PROJECT_HOME = /^\/projects(\/[^/]+(\/(lifecycle|milestones|risks))?)?$/;
+
 const GROUPS: { label: string | null; items: NavItem[] }[] = [
   {
     label: null,
     items: [
       { href: "/", label: "Mission Control", icon: Home, match: (p) => p === "/" },
-      { href: "/finder", label: "Architecture Finder", icon: Sparkles, match: (p) => p.startsWith("/finder") || /^\/projects\/[^/]+$/.test(p) },
+      { href: "/projects", label: "Projects", icon: FolderKanban, match: (p) => PROJECT_HOME.test(p) },
+    ],
+  },
+  {
+    label: "Project Delivery",
+    items: [
+      { href: "/finder", label: "Architecture Finder", icon: Sparkles, match: (p) => p.startsWith("/finder") || /^\/projects\/[^/]+\/requirements/.test(p) },
+      { href: "/studio/blueprint", label: "Solution Blueprint", icon: Boxes, match: project("blueprint") },
+      { href: "/studio/artifacts", label: "Artifact Factory", icon: FileStack, match: project("artifacts") },
+      { href: "/studio/skills", label: "AI Skill Factory", icon: Wand2, match: project("skills") },
+      { href: "/studio/deployments", label: "Deployment Studio", icon: Rocket, match: project("deployments") },
     ],
   },
   {
@@ -36,18 +49,10 @@ const GROUPS: { label: string | null; items: NavItem[] }[] = [
     ],
   },
   {
-    label: "Delivery",
-    items: [
-      { href: "/studio/blueprint", label: "Solution Blueprint", icon: Boxes, match: project("blueprint") },
-      { href: "/studio/artifacts", label: "Artifact Factory", icon: FileStack, match: project("artifacts") },
-      { href: "/studio/skills", label: "AI Skill Factory", icon: Wand2, match: project("skills") },
-      { href: "/studio/deployments", label: "Deployment Studio", icon: Rocket, match: project("deployments") },
-    ],
-  },
-  {
     label: "Workspace",
     items: [
       { href: "/workspace", label: "AI Workspace", icon: MessagesSquare },
+      { href: "/lifecycle-templates", label: "Lifecycle Templates", icon: ListChecks },
       { href: "/settings", label: "Settings", icon: Settings },
     ],
   },

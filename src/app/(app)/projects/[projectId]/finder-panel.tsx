@@ -56,7 +56,7 @@ export function FinderPanel(props: Props) {
   const [compare, setCompare] = useState<string[]>([]);
   const total = FACTOR_KEYS.reduce((sum, key) => sum + (weights[key] || 0), 0);
   const compared = props.candidates.filter((c) => compare.includes(c.id));
-  const runFinder = () => run("finder", () => api(`/api/projects/${props.projectId}/finder`, { body: { weights } }), "Finder run complete.").then((r) => r && router.replace(`/projects/${props.projectId}#candidates`));
+  const runFinder = () => run("finder", () => api(`/api/projects/${props.projectId}/finder`, { body: { weights } }), "Finder run complete.").then((r) => r && router.replace(`/projects/${props.projectId}/requirements#candidates`));
 
   return (
     <div className="stack">

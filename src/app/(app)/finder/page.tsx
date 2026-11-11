@@ -25,7 +25,7 @@ export default async function FinderPage({ searchParams }: { searchParams: Promi
           ) : (
             <div className="stack" style={{ gap: 9 }}>
               {projects.map(({ project, requirementCount, approvedVersion }) => (
-                <Link key={project.id} href={`/projects/${project.id}`} className="task">
+                <Link key={project.id} href={`/projects/${project.id}/requirements`} className="task">
                   <div style={{ minWidth: 0 }}>
                     <h3>{project.name} {project.isDemo && <DemoTag />}</h3>
                     <p>
