@@ -1,1 +1,290 @@
-{"cluster":"snowflake","researchedOn":"2026-11-11","items":[],"newItems":[]}
+{
+  "cluster": "snowflake",
+  "researchedOn": "2026-11-11",
+  "items": [
+    {
+      "slug": "snowflake-warehouse-dbt-elt",
+      "summary": "A SQL-first cloud data warehouse: a managed ingestion tool, COPY INTO or Snowpipe loads raw data into Snowflake, dbt builds staging, intermediate and mart models with tests, and BI tools query virtual warehouses that are separated per workload and suspend when idle.",
+      "sections": {
+        "context": "A SQL-skilled analytics team wants a warehouse with little infrastructure to operate, on the cloud the organisation already uses. Snowflake accounts can be hosted on AWS, Azure or Google Cloud, and each account lives in a single region.\n\nThe pattern fits when:\n\n- Most sources are databases, SaaS applications and files that can be loaded as-is.\n- Transformations can be expressed in SQL and kept in version control.\n- Reporting and self-service are the main workloads, with batch or minutes-level freshness.\n\nIt fits less well when transformation logic must run before data lands in the warehouse, for example when data has to be cleaned for compliance reasons before loading.",
+        "concepts": "- **Three layers.** Snowflake separates database storage, compute (virtual warehouses) and cloud services (authentication, access control, metadata, query optimisation).\n- **Virtual warehouse.** One or more compute clusters that run queries and loads. Warehouses are sized, suspended and resumed independently of storage.\n- **Roles.** Privileges are granted to roles; roles are granted to users or other roles, forming a hierarchy.\n- **Snowpipe.** Serverless loading of staged files shortly after they arrive.\n- **dbt model.** A SELECT statement that dbt wraps in DDL and runs in the warehouse. `ref()` and `source()` calls define the dependency graph.\n- **Layers in dbt.** Staging (one model per source table), intermediate (logic that prepares joins) and marts (business entities).",
+        "how-it-works": "1. An ingestion tool, `COPY INTO` or Snowpipe loads source data unchanged into a raw database. Snowpipe runs a `COPY` statement defined in a pipe on Snowflake-managed compute, triggered by cloud storage event notifications or a REST call.\n2. dbt declares raw tables as sources and builds staging models on top of them, then intermediate models, then marts. dbt compiles the SQL and Snowflake executes it; no data leaves the warehouse.\n3. Data tests and unit tests run with the build. Source freshness checks report stale loads.\n4. BI tools query the marts through their own virtual warehouse, separate from the loading and transformation warehouses, so workloads do not queue behind each other.\n5. Warehouses auto-suspend when idle and auto-resume when a statement arrives.",
+        "implementation": "- Create a role hierarchy with custom roles granted up to SYSADMIN. Keep ACCOUNTADMIN for a small number of people and do not use it to create objects or run automation.\n- Create one warehouse per workload type (loading, dbt, BI) with auto-suspend and auto-resume on.\n- Configure a SAML or OIDC security integration for single sign-on. Add SCIM if the identity provider should provision users and roles; SCIM does not enable SSO by itself.\n- Declare sources in dbt, build the three layers, and set materializations per folder in `dbt_project.yml` (staging as views, marts as tables or incremental).\n- Add a CI job that builds only changed models and their children (`state:modified+`) against production state, in a schema separate from production.\n- Assign resource monitors to warehouses and budgets to the account or object groups.",
+        "prerequisites": "- A Snowflake account in the required cloud and region, on an edition that includes the features the design needs. Check the edition page before committing: masking policies, row access policies, multi-cluster warehouses and extended Time Travel need Enterprise Edition or higher; private connectivity to the service and account failover need Business Critical or higher.\n- An identity provider that supports SAML 2.0 or OIDC.\n- A Git repository and a place to run dbt (dbt platform or dbt Core in a scheduler or CI runner).\n- A service user for dbt. dbt's Snowflake connection documentation favours key pair authentication over passwords.\n- An ingestion route for each source: a connector tool, staged files, or Snowpipe.",
+        "best-practices": "- Keep staging models one-to-one with source tables and materialize them as views; build marts as tables and move to incremental only when full rebuilds take too long.\n- Put the four built-in generic data tests (`unique`, `not_null`, `accepted_values`, `relationships`) on keys. Note that `relationships` skips NULLs, so pair it with `not_null` where nulls should fail.\n- Use snapshots when history of a mutable source table is needed (type 2 slowly changing dimension).\n- Pick the auto-suspend interval with the workload in mind: each resume is billed for at least 60 seconds, so very short intervals on a warehouse with regular small gaps can cost more.\n- Resize a warehouse for slow, complex queries; add clusters (multi-cluster) for concurrency and queuing.\n- Set dbt query tags so warehouse usage can be attributed.",
+        "limitations": "- Cost control depends on configuration: a warehouse with auto-suspend disabled runs until someone stops it.\n- Resource monitors apply to warehouses only. They do not limit serverless features such as Snowpipe or automatic clustering; use budgets for those, which alert rather than stop usage unless a custom action is attached.\n- Snowpipe does not guarantee that files load in the order they were staged.\n- dbt snapshots are batch-based; they capture state only when the snapshot command runs.\n- Tables created by dbt on Snowflake are transient by default, so they have no Fail-safe period and at most one day of Time Travel. Decide explicitly whether marts should be permanent.\n- An account lives in one region; multi-region use needs additional accounts and replication.",
+        "security": "- **Identity.** Federated authentication through SAML 2.0 or OIDC security integrations; SCIM for provisioning users and roles from the identity provider.\n- **Authorisation.** Role-based access control with a role hierarchy. ACCOUNTADMIN is the top system role but is not a superuser: it reaches objects only through privileges held by itself or roles below it.\n- **Column and row protection.** Masking policies change what a role sees at query time without altering stored data. Row access policies decide which rows a query returns. Both need Enterprise Edition or higher. A column cannot be in a masking policy signature and a row access policy signature at the same time.\n- **Network.** Network policies restrict access by IP address in every edition. Private connectivity (AWS PrivateLink, Azure Private Link, Google Cloud Private Service Connect) needs Business Critical or higher.",
+        "cost-drivers": "- **Warehouse compute.** Billed per second while running, with a 60-second minimum each time a warehouse starts or resumes. Each size step up doubles the credit rate.\n- **Serverless features.** Snowpipe, automatic clustering and similar features use Snowflake-managed compute and are billed separately from warehouses.\n- **Storage.** Based on average bytes stored, including Time Travel and Fail-safe copies of permanent tables.\n- **Cloud services.** Charged only when daily usage exceeds a set fraction of daily warehouse usage; check current documentation for the threshold.\n- **Data transfer.** Loading in is not charged by Snowflake; moving data out to another region or cloud is.\n- **dbt choices.** Views are cheap to build and cost more to query; tables are the reverse. Full rebuilds of large tables drive transformation warehouse time.",
+        "validation": "- Run `dbt build` so models, data tests, unit tests and snapshots execute together; fail the CI job on test failures.\n- Run source freshness checks and confirm they warn or error at the agreed thresholds.\n- Reconcile row counts between each source and its raw table.\n- Query masked columns and row-filtered tables with a non-privileged role and confirm the result.\n- Confirm each warehouse has auto-suspend set and actually suspends after a quiet period.\n- Lower a resource monitor quota in a test and confirm the notify and suspend actions fire; confirm a budget notification reaches the right people.\n- Check that a CI run builds only modified models and their children."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Virtual warehouse size and running time (per-second billing with a 60-second minimum per start)",
+          "Number of clusters started by multi-cluster warehouses under concurrency",
+          "Serverless features such as Snowpipe and automatic clustering, billed outside warehouses",
+          "Storage volume, including Time Travel and Fail-safe copies of permanent tables",
+          "Data transfer out to other regions or clouds",
+          "dbt materialization choices and how often large tables are fully rebuilt"
+        ],
+        "tradeoffs": [
+          "Very little infrastructure to run, but the engine and its storage format are proprietary unless Iceberg tables are used.",
+          "Transformation logic is visible, versioned SQL, but its compute cost lands on the warehouse and must be managed there.",
+          "Separate warehouses per workload prevent contention, but each one adds its own minimum billing and idle time.",
+          "Several governance and network features are tied to higher editions."
+        ],
+        "limitations": [
+          "Cost control depends on auto-suspend, workload isolation and monitors being configured.",
+          "Resource monitors cover warehouses only; serverless features need budgets.",
+          "Masking and row access policies need Enterprise Edition or higher; private connectivity needs Business Critical or higher — check current documentation.",
+          "dbt creates transient tables on Snowflake by default (no Fail-safe).",
+          "An account is hosted in a single region."
+        ],
+        "steps": [
+          "Choose the cloud, region and edition against the security and recovery requirements.",
+          "Create the role hierarchy, databases and one warehouse per workload with auto-suspend and auto-resume.",
+          "Configure single sign-on, optional SCIM provisioning and network policies.",
+          "Load raw data with an ingestion tool, COPY INTO or Snowpipe.",
+          "Declare dbt sources and build staging, intermediate and mart models with data tests and unit tests.",
+          "Apply masking policies and row access policies, then connect BI tools through their own warehouse.",
+          "Add a dbt CI job using state-based selection and deferral to production.",
+          "Assign resource monitors to warehouses and budgets for serverless and account-level spend."
+        ]
+      },
+      "tokenNotes": "security token 'dr': database replication is available in all editions, but account failover/failback needs Business Critical or higher — keep the token, but the text should say so. Tokens 'hipaa' and 'pci' were not checked against Snowflake's compliance documentation in this pass. latency 'near-real-time' is supported by Snowpipe (data typically available within minutes).",
+      "sources": [
+        { "title": "Snowflake key concepts and architecture", "url": "https://docs.snowflake.com/en/user-guide/intro-key-concepts", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Three-layer architecture: storage, compute (virtual warehouses), cloud services" },
+        { "title": "Snowflake editions", "url": "https://docs.snowflake.com/en/user-guide/intro-editions", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Which features need Enterprise or Business Critical; network policies in all editions" },
+        { "title": "Working with resource monitors", "url": "https://docs.snowflake.com/en/user-guide/resource-monitors", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Resource monitors apply to warehouses only; notify and suspend actions" },
+        { "title": "How we structure our dbt projects", "url": "https://docs.getdbt.com/best-practices/how-we-structure/1-guide-overview", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "Staging, intermediate and marts layering" },
+        { "title": "Continuous integration jobs in dbt", "url": "https://docs.getdbt.com/docs/deploy/ci-jobs", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "CI job building state:modified+ with deferral to a production environment" }
+      ],
+      "corrections": [
+        "Old steps implied resource monitors cover cost in general. Snowflake states resource monitors work for warehouses only and do not control serverless features such as Snowpipe; budgets were added for that.",
+        "Old limitation said private connectivity is 'tied to specific editions and cloud regions'. Now specific: private connectivity needs Business Critical or higher; masking and row access policies need Enterprise or higher; network policies are available in all editions.",
+        "Old cost driver listed Time Travel and Fail-safe storage without qualification. dbt creates transient tables on Snowflake by default, which have no Fail-safe and at most one day of Time Travel; text now says this.",
+        "Old text said 'dbt tests'. dbt now distinguishes data tests from unit tests (unit tests since v1.8); both are named.",
+        "Old text implied warehouses simply 'suspend when idle'. Added that each resume has a 60-second billing minimum, so the auto-suspend interval should match the query pattern."
+      ],
+      "unconfirmed": [
+        "Suitability for HIPAA and PCI workloads (tokens in content.ts) was not checked against Snowflake compliance pages.",
+        "Customer-managed keys (token 'cmk'): search results indicated Tri-Secret Secure is tied to higher editions but the edition table was garbled in the result; not stated in the text."
+      ]
+    },
+    {
+      "slug": "snowflake",
+      "summary": "A cloud data platform delivered as a service on AWS, Azure and Google Cloud. Storage, compute and cloud services are separate layers; compute is provided by virtual warehouses that are sized, suspended and resumed independently, and SQL is the primary interface.",
+      "sections": {
+        "concepts": "- **Database storage.** Loaded data is reorganised into a compressed, columnar format and split into micro-partitions. Iceberg tables keep data in open format, in Snowflake-managed storage or in customer cloud storage through an external volume.\n- **Compute.** A virtual warehouse is one or more clusters that run queries, loads and DML.\n- **Cloud services.** Authentication, access control, metadata management, query parsing and optimisation.\n- **Roles.** Privileges go to roles, roles go to users or other roles. System roles include ACCOUNTADMIN, SECURITYADMIN, USERADMIN and SYSADMIN.\n- **Time Travel and Fail-safe.** Time Travel lets you query or restore earlier data within a retention period. Fail-safe is a further period after it, usable only by Snowflake for recovery.\n- **Shares.** A provider exposes objects in a share; consumers query them in place, read-only, with no copy.",
+        "how-it-works": "The architecture combines a central data store that all compute can reach with massively parallel processing clusters that execute queries.\n\n- Warehouses can auto-suspend after a period of inactivity and auto-resume when a statement is submitted.\n- A multi-cluster warehouse adds clusters for concurrency. With a minimum below the maximum it runs in auto-scale mode; with both equal it runs in maximized mode. The Standard scaling policy favours starting clusters to avoid queuing; Economy favours keeping running clusters fully loaded.\n- Resizing a warehouse helps large, complex queries. It does not affect statements already running.\n- Files are loaded in bulk with `COPY INTO`, continuously with Snowpipe, or row by row with Snowpipe Streaming.\n- External tables give read-only access to files in an external stage.",
+        "best-practices": "- Grant custom roles up to SYSADMIN so administrators can manage every object. Limit ACCOUNTADMIN to a few users and do not use it for object creation or automated scripts.\n- Separate warehouses by workload and enable auto-suspend and auto-resume on each.\n- Choose the auto-suspend interval from the query pattern: every resume bills at least 60 seconds.\n- Scale up for slow complex queries, scale out (multi-cluster) for queuing under concurrency. A larger warehouse is not necessarily faster for small, simple queries.\n- Use transient tables for data that can be rebuilt, to avoid Fail-safe storage.\n- Assign resource monitors to warehouses and use budgets for account-level and serverless spend.\n- Prepare load files in the size range Snowflake recommends for parallel loading; check current documentation for the figure.",
+        "limitations": "- The native storage format is proprietary; open-format access needs Iceberg tables.\n- External tables are read-only; no DML.\n- Each account is hosted in one region. Using several regions means several accounts plus replication.\n- Fail-safe cannot be used by customers directly, and transient and temporary tables have none.\n- Resource monitors do not cover serverless features or AI services.\n- Feature availability depends on edition: multi-cluster warehouses, masking policies, row access policies and Time Travel beyond one day need Enterprise or higher; private connectivity and account failover/failback need Business Critical or higher. Confirm against the current editions page.\n- Direct shares work within a region; sharing across regions or clouds relies on replication.",
+        "security": "- **Authentication.** Federated authentication with SAML 2.0 or OIDC security integrations. SCIM provisions users and roles from Okta, Microsoft Entra ID or a custom identity provider, and is configured separately from SSO.\n- **Access control.** Role hierarchy; privileges of a role are inherited by roles above it. ACCOUNTADMIN is not a superuser.\n- **Data protection policies.** Masking policies are schema-level objects applied at query time; stored data is unchanged. Row access policies control which rows are visible to SELECT, UPDATE, DELETE and MERGE.\n- **Network.** Network policies and network rules restrict access by IP address. Private connectivity uses AWS PrivateLink, Azure Private Link or Google Cloud Private Service Connect on Business Critical or higher.\n- **Continuity.** Database and share replication is available in all editions; replication of other account objects and failover need Business Critical or higher.",
+        "cost-drivers": "Cost has three parts: compute, storage and data transfer.\n\n- **Warehouses.** Per-second billing with a 60-second minimum on each start or resume. Each size step doubles the credit rate, so a larger warehouse costs more per hour but may finish sooner.\n- **Serverless features.** Snowpipe, automatic clustering, search optimisation and similar features run on Snowflake-managed compute and are billed separately.\n- **Cloud services.** Billed only when daily usage exceeds a threshold relative to warehouse usage.\n- **Storage.** Average on-disk bytes per day, including Time Travel and Fail-safe data.\n- **Data transfer.** Egress to another region or cloud is charged; transfers within the same region are not.\n\nUsage can be explored in Snowsight and in the ACCOUNT_USAGE and ORGANIZATION_USAGE schemas."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Warehouse size, running time and number of clusters",
+          "Serverless feature usage",
+          "Stored bytes including Time Travel and Fail-safe",
+          "Egress to other regions or clouds",
+          "Edition, which sets the credit rate and available features"
+        ],
+        "tradeoffs": [
+          "Little to operate, but proprietary engine and default storage format.",
+          "Independent warehouses isolate workloads but multiply idle and minimum-billing time.",
+          "Longer Time Travel retention improves recoverability and increases storage."
+        ],
+        "limitations": [
+          "External tables are read-only.",
+          "One region per account.",
+          "Resource monitors cover warehouses only.",
+          "Key governance and network features depend on edition."
+        ],
+        "compare": {
+          "Delivery model": "Software as a service",
+          "Primary skills": "SQL",
+          "Storage format": "Managed compressed columnar format (micro-partitions); Apache Iceberg tables and read-only external tables also supported",
+          "Billing model": "Consumption: compute credits (warehouses per second, serverless features), storage and data transfer",
+          "Clouds": "AWS, Azure, Google Cloud"
+        }
+      },
+      "sources": [
+        { "title": "Snowflake key concepts and architecture", "url": "https://docs.snowflake.com/en/user-guide/intro-key-concepts", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Storage, compute and cloud services layers; micro-partitions; Iceberg tables" },
+        { "title": "Multi-cluster warehouses", "url": "https://docs.snowflake.com/en/user-guide/warehouses-multicluster", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Auto-scale and maximized modes; Standard and Economy scaling policies" },
+        { "title": "Understanding & using Time Travel", "url": "https://docs.snowflake.com/en/user-guide/data-time-travel", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Time Travel retention by edition and table type; Fail-safe follows Time Travel" },
+        { "title": "Overview of Access Control", "url": "https://docs.snowflake.com/en/user-guide/security-access-control-overview", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Role hierarchy, system-defined roles, ACCOUNTADMIN not a superuser" },
+        { "title": "Understanding overall cost", "url": "https://docs.snowflake.com/en/user-guide/cost-understanding-overall", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Compute, storage and data transfer cost components; cloud services billing rule" }
+      ],
+      "corrections": [
+        "Old concepts listed only databases, schemas, warehouses and roles. Added the three-layer architecture, Time Travel/Fail-safe and shares, as described in Snowflake's architecture page.",
+        "Old compare value 'Managed proprietary format; external and open table formats also supported' made more specific: compressed columnar micro-partitions, Iceberg tables, and external tables that are read-only.",
+        "Old limitation 'cost follows warehouse running time' was incomplete: serverless features, storage (including Time Travel and Fail-safe) and egress are separate cost components.",
+        "Old text did not mention editions. Added that multi-cluster warehouses, masking and row access policies need Enterprise or higher and private connectivity needs Business Critical or higher."
+      ],
+      "unconfirmed": []
+    },
+    {
+      "slug": "dbt",
+      "summary": "A SQL transformation framework: models are SELECT statements under version control, compiled and run inside the warehouse in dependency order, with data tests, unit tests, snapshots and documentation. dbt does not extract or load data.",
+      "sections": {
+        "concepts": "- **Model.** A single SELECT statement in a `.sql` file. dbt wraps it in the DDL for the chosen materialization.\n- **Source.** A declaration of a raw table loaded by another tool. Sources support freshness checks.\n- **`ref()` and `source()`.** References between nodes. dbt uses them to build the dependency graph (DAG) and to resolve the schema for the current environment.\n- **Materializations.** Five built in: view, table, incremental, ephemeral and materialized view.\n- **Data tests.** Assertions that return failing rows. Four generic tests ship with dbt: `unique`, `not_null`, `accepted_values`, `relationships`. Singular tests are one-off SQL files.\n- **Unit tests.** Check a model's SQL logic against mock input rows and expected output.\n- **Snapshots.** Record changes to a mutable table over time (type 2 slowly changing dimension).\n- **Macros.** Jinja code that generates SQL at compile time.",
+        "how-it-works": "dbt first parses the project and builds a manifest and the DAG from `ref` and `source` calls, without running SQL. It then compiles each node and executes it against the warehouse in dependency order.\n\n- **View:** rebuilt cheaply, but logic runs on every query.\n- **Table:** stored result, rebuilt in full on each run.\n- **Incremental:** on later runs only new or changed rows are processed, using the `is_incremental()` macro and an optional `unique_key`. `--full-refresh` rebuilds from scratch.\n- **Ephemeral:** no warehouse object; inlined as a CTE in models that reference it.\n\nSnapshots are batch-based: they capture changes only when the snapshot command runs on a schedule. Since v1.8, `dbt test` runs both unit tests and data tests.",
+        "implementation": "On Snowflake:\n\n- Tables created by dbt are transient by default (no Fail-safe, at most one day of Time Travel). Set `transient: false` per folder or per model where permanent tables are required.\n- A `query_tag` can be set in the profile and overridden per model, which helps attribute warehouse usage.\n- The adapter supports Snowflake dynamic tables as a materialization; available options depend on the adapter version.\n- The warehouse used can be set per model, so heavy models can run on a larger warehouse.\n\nFor CI, build only what changed: `dbt build --select state:modified+ --defer --state <path to production artifacts>`. In the dbt platform, a CI job does this by deferring to a chosen environment, by default production.",
+        "best-practices": "From dbt's own guides:\n\n- Layer models as staging, intermediate and marts. Staging models map one-to-one to source tables.\n- Materialize staging as views. Start with views, change to tables when queries are too slow, change to incremental when table builds are too slow.\n- Build marts as tables or incremental models.\n- Set materializations and schemas per folder in `dbt_project.yml`; override per model only when needed.\n- Pair `relationships` with `not_null`, because `relationships` ignores NULL values.\n- For type 2 history, snapshot the source and build models on the snapshot.\n- In CI with incremental models, clone existing incremental models into the CI schema first so they run incrementally instead of building in full (needs a warehouse with zero-copy cloning).",
+        "limitations": "- dbt does not move data; ingestion needs a separate tool.\n- Unit tests are supported on SQL models only (check current documentation for changes).\n- Snapshots miss changes that happen and revert between two runs.\n- Incremental models with a `unique_key` that contains NULLs or is not unique can produce duplicate rows.\n- Schema-change handling on incremental models does not backfill new columns in old rows; a full refresh or manual update is needed.\n- State-based CI depends on an up-to-date production manifest. If production changes while a pull request is open, unrelated models can appear as modified until the branch is updated.\n- Behaviour of materializations and incremental strategies differs between warehouse adapters."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Warehouse compute used by model builds and tests",
+          "Full rebuilds of large tables versus incremental processing",
+          "Views that push computation to every downstream query",
+          "CI runs that build more than the changed models",
+          "dbt platform licensing if the hosted product is used"
+        ],
+        "tradeoffs": [
+          "SQL-only models are accessible to analysts but less suited to procedural logic.",
+          "Incremental models cut build time and add logic that must be correct in both full and incremental runs.",
+          "Ephemeral models keep the warehouse tidy but cannot be queried when debugging."
+        ],
+        "limitations": [
+          "Does not extract or load data.",
+          "Snapshots are batch-based, not change data capture.",
+          "Adapter-specific behaviour varies by warehouse and version."
+        ]
+      },
+      "sources": [
+        { "title": "Materializations", "url": "https://docs.getdbt.com/docs/build/materializations", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "The five built-in materializations and their trade-offs" },
+        { "title": "Add data tests to your DAG", "url": "https://docs.getdbt.com/docs/build/data-tests", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "Generic and singular data tests; the four built-in generic tests" },
+        { "title": "Unit tests", "url": "https://docs.getdbt.com/docs/build/unit-tests", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "Unit tests with mock inputs and expected rows" },
+        { "title": "Add snapshots to your DAG", "url": "https://docs.getdbt.com/docs/build/snapshots", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "Snapshots implement type 2 slowly changing dimensions and are batch-based" },
+        { "title": "Snowflake configurations", "url": "https://docs.getdbt.com/reference/resource-configs/snowflake-configs", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "Transient tables by default, query tags, dynamic tables on Snowflake" }
+      ],
+      "corrections": [
+        "Old concepts said 'tests'. dbt now has two kinds: data tests (generic and singular) and unit tests; `dbt test` runs both since v1.8.",
+        "Old concepts omitted snapshots and materializations, both core to how dbt builds objects; added.",
+        "Old best practice 'Test keys and relationships' kept, with the documented caveat that the relationships test ignores NULLs.",
+        "Old best practice 'Run in CI on every change' made specific: state-based selection (state:modified+) with deferral to production."
+      ],
+      "unconfirmed": [
+        "dbt's documentation generation feature (mentioned in the old summary) was not covered by the search results; the word is kept in the summary only."
+      ]
+    },
+    {
+      "slug": "elt-in-warehouse",
+      "summary": "Extract data from sources, load it into the warehouse unchanged, then transform it there with SQL using the warehouse's own compute. It differs from ETL in where the transformation runs, and it keeps the raw data available for re-processing.",
+      "sections": {
+        "context": "In ETL, a separate processing engine transforms data before it is loaded into the target. That engine is extra infrastructure to run, and the logic inside it is often out of reach of the analysts who use the result.\n\nCloud warehouses separate storage from compute and can scale compute for transformation work. Microsoft's architecture guidance describes ELT as differing from ETL solely in where the transformation takes place: in the target data store, using its processing capability. Google Cloud and AWS describe the same ordering: extract, load into the warehouse, then transform.",
+        "how-it-works": "1. **Extract and load.** An ingestion tool or loading service copies source data into raw tables without reshaping it.\n2. **Transform.** SQL statements running in the warehouse build cleaned, joined and aggregated tables from the raw tables.\n3. **Serve.** Reporting tools query the transformed tables.\n\nBecause raw data stays in the warehouse, transformations can be changed and re-run without extracting from the source again. A transformation framework such as dbt adds dependency ordering, tests and version control to step 2, typically arranged as staging, intermediate and mart layers.",
+        "best-practices": "- Keep raw tables unmodified and in a separate database or schema from transformed data.\n- Keep transformation SQL in version control and build it in dependency order.\n- Test keys and relationships in the transformed layers, and check freshness of the raw layer.\n- Give transformation its own compute, separate from reporting queries, so the two do not contend.\n- Restrict access to raw tables that contain sensitive columns; apply masking in the warehouse.\n- Use incremental processing for large tables once full rebuilds become slow.",
+        "limitations": "- Transformation cost moves onto the warehouse and has to be managed there.\n- The target must have enough processing capacity to transform at the required scale.\n- Raw, possibly sensitive, data lands in the warehouse before any cleaning. Where rules require data to be cleaned or removed before it is stored in the warehouse, ETL is often preferred.\n- Storage grows because both raw and transformed copies are kept.\n- SQL is the main language; logic that is hard to express in SQL needs another route."
+      },
+      "attributes": {
+        "costDrivers": [
+          "Warehouse compute consumed by transformations",
+          "Storage for both raw and transformed data",
+          "Frequency and scope of rebuilds",
+          "Ingestion tool or loading service charges"
+        ],
+        "tradeoffs": [
+          "No separate transformation servers, but warehouse compute pays for all transformation.",
+          "Raw data is kept for re-processing, which also means sensitive raw data is stored and must be protected.",
+          "Logic is visible to SQL users, but limited to what SQL expresses well."
+        ],
+        "limitations": [
+          "Needs a target with enough compute to transform at scale.",
+          "Not suitable where data must be cleaned before it enters the warehouse."
+        ]
+      },
+      "sources": [
+        { "title": "Extract, transform, load (ETL) - Azure Architecture Center", "url": "https://learn.microsoft.com/en-us/azure/architecture/data-guide/relational-data/etl", "publisher": "Microsoft", "sourceType": "vendor-official", "supports": "ELT differs from ETL only in where transformation takes place" },
+        { "title": "What is ELT (extract, load, and transform)?", "url": "https://cloud.google.com/discover/what-is-elt", "publisher": "Google Cloud", "sourceType": "vendor-official", "supports": "ELT definition; raw data retained so transformations can be re-run" },
+        { "title": "ETL vs ELT - Difference Between Data-Processing Approaches - AWS", "url": "https://aws.amazon.com/compare/the-difference-between-etl-and-elt/", "publisher": "Amazon Web Services", "sourceType": "vendor-official", "supports": "Trade-offs between ETL and ELT, including data types and compliance cases" },
+        { "title": "Understanding ELT: extract, load, transform", "url": "https://docs.getdbt.com/terms/elt", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "ELT definition from the transformation-tool perspective" }
+      ],
+      "corrections": [
+        "Old context framed ETL servers only as hidden logic and extra infrastructure. Added the vendor framing (the difference is where transformation runs) and the documented case where ETL is still preferred: data that must be cleaned before it enters the warehouse.",
+        "Old limitations mentioned only cost. Added the requirement that the target has enough compute, and that raw sensitive data is stored before cleaning."
+      ],
+      "unconfirmed": []
+    }
+  ],
+  "newItems": [
+    {
+      "slug": "snowflake-virtual-warehouse-sizing",
+      "type": "best-practice",
+      "title": "Snowflake virtual warehouse sizing and isolation",
+      "summary": "How to size, scale and suspend Snowflake virtual warehouses: separate warehouses per workload, scale up for complex queries, scale out for concurrency, and set auto-suspend with the per-resume billing minimum in mind.",
+      "tags": ["snowflake", "cost", "performance"],
+      "sections": {
+        "concepts": "- **Size.** Each step up in warehouse size doubles the credit rate.\n- **Auto-suspend and auto-resume.** A warehouse can suspend after a set idle time and resume when a statement is submitted. Suspension is checked by a background process, so timing is approximate.\n- **Multi-cluster warehouse.** An Enterprise Edition feature that adds clusters of the same size for concurrency. Auto-scale mode when minimum clusters is below maximum; maximized mode when equal.\n- **Scaling policy.** Standard starts clusters readily to avoid queuing. Economy keeps running clusters fully loaded to save credits.",
+        "best-practices": "- Give loading, transformation and BI their own warehouses so one workload does not queue behind another.\n- Scale up (resize) when individual queries are large and slow. Scale out (multi-cluster) when queries queue because of concurrency.\n- Do not expect a larger warehouse to speed up small, simple queries.\n- Keep auto-resume on. Set auto-suspend from the query pattern: every resume bills at least 60 seconds, so if queries arrive with regular gaps of a few minutes, a very short suspend interval adds minimum charges.\n- Remember that a resize does not affect statements already running; only queued and new statements use the added compute.\n- Attach a resource monitor to each warehouse or group of warehouses.",
+        "limitations": "- Setting auto-suspend to 0 or NULL means the warehouse never suspends.\n- Multi-cluster warehouses need Enterprise Edition or higher.\n- Resource monitors stop warehouses but do not cover serverless features.\n- Snowflake offers newer managed compute options that change how sizing works; check current documentation before choosing.",
+        "validation": "- Review queuing and load on each warehouse after a representative week and adjust size or cluster counts.\n- Confirm every warehouse has a non-zero auto-suspend value.\n- Check warehouse credit usage in the ACCOUNT_USAGE views against expectations per workload."
+      },
+      "attributes": {
+        "costDrivers": ["Warehouse size", "Running time and number of resumes", "Number of clusters under the scaling policy"],
+        "tradeoffs": ["Standard scaling reduces queuing at higher credit use; Economy does the reverse.", "More warehouses improve isolation and add idle time."]
+      },
+      "relationships": [["part_of", "snowflake"], ["related_to", "snowflake-warehouse-dbt-elt"], ["related_to", "cost-guardrails"]],
+      "sources": [
+        { "title": "Warehouse considerations", "url": "https://docs.snowflake.com/en/user-guide/warehouses-considerations", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Sizing guidance, scale up versus scale out, auto-suspend and the 60-second minimum" },
+        { "title": "Multi-cluster warehouses", "url": "https://docs.snowflake.com/en/user-guide/warehouses-multicluster", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Modes and scaling policies" },
+        { "title": "CREATE WAREHOUSE", "url": "https://docs.snowflake.com/en/sql-reference/sql/create-warehouse", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "AUTO_SUSPEND and AUTO_RESUME behaviour" },
+        { "title": "Understanding compute cost", "url": "https://docs.snowflake.com/en/user-guide/cost-understanding-compute", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Per-second billing and credit rate doubling per size" }
+      ]
+    },
+    {
+      "slug": "snowpipe",
+      "type": "technology",
+      "title": "Snowpipe and Snowpipe Streaming",
+      "summary": "Snowflake's serverless continuous loading services. Snowpipe loads files from a stage shortly after they arrive; Snowpipe Streaming writes rows directly into tables without staging files.",
+      "tags": ["snowflake", "ingestion", "streaming"],
+      "sections": {
+        "concepts": "- **Pipe.** An object holding a `COPY INTO` statement that Snowpipe runs for newly staged files.\n- **Triggering.** Cloud storage event notifications (auto-ingest) or calls to the Snowpipe REST API.\n- **Serverless compute.** Snowflake provides and scales the compute; no warehouse is sized or managed for the load.\n- **Snowpipe Streaming.** Applications send rows to tables through channels, with no files. The Snowflake Connector for Kafka can use it.",
+        "how-it-works": "With Snowpipe, files land in an internal or external stage, a notification or API call queues them, and the pipe's COPY statement loads them into a standard or Iceberg table. Data is typically available within minutes.\n\nWith Snowpipe Streaming, rows are written directly and become queryable within seconds. Ordering and exactly-once delivery are handled per channel using offset tokens.\n\nSnowflake suggests Snowpipe when the pipeline already produces files in cloud storage and minute-level latency is acceptable, and Snowpipe Streaming for row-level, lower-latency ingestion.",
+        "limitations": "- Snowpipe generally loads older files first but does not guarantee load order.\n- Resource monitors do not control Snowpipe credit usage; use budgets and usage views.\n- Snowpipe Streaming has more than one architecture with different SDKs and billing; check current documentation for which applies in your cloud and region.\n- File size affects efficiency: Snowflake publishes a recommended compressed file size range for loads and advises against very large files.",
+        "cost-drivers": "Snowpipe and Snowpipe Streaming are billed as serverless features, separately from virtual warehouses. The billing basis (volume ingested, and other components depending on the architecture) has changed over time; read the current Snowpipe cost pages rather than relying on older descriptions. Many very small files add overhead."
+      },
+      "attributes": {
+        "costDrivers": ["Volume of data ingested", "Number and size of files", "Streaming architecture in use"],
+        "limitations": ["No guaranteed file load order", "Not covered by resource monitors"],
+        "compare": {
+          "Delivery model": "Serverless feature of Snowflake",
+          "Primary skills": "SQL; Java or Python SDK for streaming",
+          "Storage format": "Loads into Snowflake standard or Iceberg tables",
+          "Billing model": "Consumption (serverless credits by ingested volume; check current documentation)",
+          "Clouds": "AWS, Azure, Google Cloud (feature availability varies by region)"
+        }
+      },
+      "relationships": [["part_of", "snowflake"], ["related_to", "snowflake-warehouse-dbt-elt"]],
+      "sources": [
+        { "title": "Snowpipe", "url": "https://docs.snowflake.com/en/user-guide/data-load-snowpipe-intro", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Pipes, triggering, serverless compute, load order" },
+        { "title": "Snowpipe Streaming", "url": "https://docs.snowflake.com/en/user-guide/data-load-snowpipe-streaming-overview", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Row-based ingestion, channels, when to choose it" },
+        { "title": "Preparing your data files", "url": "https://docs.snowflake.com/en/user-guide/data-load-considerations-prepare", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "File sizing recommendations for bulk loads and Snowpipe" },
+        { "title": "Snowpipe costs", "url": "https://docs.snowflake.com/en/user-guide/data-load-snowpipe-billing", "publisher": "Snowflake", "sourceType": "vendor-official", "supports": "Snowpipe is billed as a serverless feature" }
+      ]
+    },
+    {
+      "slug": "dbt-project-structure",
+      "type": "best-practice",
+      "title": "dbt project structure: staging, intermediate, marts",
+      "summary": "dbt Labs' recommended way to organise a dbt project: staging models that mirror sources, intermediate models that prepare joins, and marts that represent business entities, with materializations and schemas set per folder.",
+      "tags": ["dbt", "modelling", "elt"],
+      "sections": {
+        "concepts": "- **Staging.** One model per source table. Renaming, type casting and light cleaning only. These are building blocks, not final outputs.\n- **Intermediate.** Models that stack logic to prepare staging models for joining and break complex transformations into manageable pieces.\n- **Marts.** Models that bring the pieces together into the entities the organisation cares about.\n\nEach layer builds on the one before it, and the folder layout under `models/` follows the same three names.",
+        "best-practices": "- Materialize staging models as views: downstream models then always read current data, and no storage is spent on objects consumers do not query.\n- Materialize marts as tables, or incremental when a full rebuild is too slow.\n- For intermediate models, dbt's guides suggest ephemeral, or views in a custom schema when you need to inspect them during development.\n- Set materialization and schema per folder in `dbt_project.yml`; more specific settings override broader ones.\n- Map folders to warehouse schemas so each layer is easy to find and to grant access to.\n- Follow the rule of thumb: start with a view; when it is slow to query make it a table; when the table is slow to build make it incremental.",
+        "limitations": "- dbt's guidance on intermediate materialization differs between pages (ephemeral in one, view in another); choose one convention per project.\n- Ephemeral models cannot be queried directly, which makes debugging harder.\n- The structure is a convention, not something dbt enforces."
+      },
+      "attributes": {
+        "tradeoffs": ["Views keep staging fresh and cheap to build but push compute to downstream queries.", "More layers improve readability and add models to maintain."]
+      },
+      "relationships": [["part_of", "dbt"], ["related_to", "elt-in-warehouse"], ["related_to", "snowflake-warehouse-dbt-elt"]],
+      "sources": [
+        { "title": "How we structure our dbt projects", "url": "https://docs.getdbt.com/best-practices/how-we-structure/1-guide-overview", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "The three layers and their purpose" },
+        { "title": "Staging: Preparing our atomic building blocks", "url": "https://docs.getdbt.com/best-practices/how-we-structure/2-staging", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "Staging one-to-one with sources, materialized as views" },
+        { "title": "Best practices for materializations", "url": "https://docs.getdbt.com/best-practices/materializations/5-best-practices", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "View, then table, then incremental; intermediate as ephemeral or view" },
+        { "title": "Mapping project folders to warehouse schemas", "url": "https://docs.getdbt.com/best-practices/how-we-structure/6-mapping-folders-to-warehouse", "publisher": "dbt Labs", "sourceType": "vendor-official", "supports": "Folder-to-schema mapping and per-folder configuration" }
+      ]
+    }
+  ]
+}

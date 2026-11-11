@@ -16,6 +16,7 @@ import { getJob } from "@/server/jobs";
 import { validateSkillMd } from "@/lib/skill-validate";
 import { DEMO_PROJECT } from "@/server/seed/content";
 import { ARTIFACT_DEFS } from "@/lib/artifact-catalog";
+import { LIBRARY } from "@/server/seed/library";
 import { recentActivity } from "@/server/services/workspace";
 
 let alice: Ctx;
@@ -40,13 +41,21 @@ afterAll(async () => {
 });
 
 describe("knowledge intelligence", () => {
-  it("seeds demo knowledge as unreviewed drafts with provenance", async () => {
+  it("loads the library as unreviewed drafts with provenance", async () => {
     const { items, total } = await knowledge.listItems(alice, { limit: 200 });
-    expect(total).toBe(41);
-    expect(items.every((i) => i.status === "draft" && i.isDemo && i.lastVerifiedAt === null)).toBe(true);
+    expect(total).toBe(LIBRARY.items.length);
+    expect(total).toBeGreaterThanOrEqual(41);
+    // Nothing in the library is presented as reviewed or verified, whoever wrote it.
+    expect(items.every((i) => i.status === "draft" && i.lastVerifiedAt === null)).toBe(true);
+    for (const item of items) {
+      const seed = LIBRARY.items.find((x) => x.slug === item.slug)!;
+      expect(item.origin, item.slug).toBe(seed.researchedOn ? "ai-researched" : "demo-seed");
+      expect(item.isDemo, item.slug).toBe(!seed.researchedOn);
+    }
     const detail = await knowledge.getItemDetail(alice, "fabric-lakehouse-enterprise-bi");
-    expect(detail.sources.length).toBe(2);
-    expect(detail.sources.every((s) => s.source.lastVerifiedAt === null)).toBe(true);
+    expect(detail.sources.length).toBeGreaterThanOrEqual(2);
+    // A researched item cites specific pages with what each supports; an unresearched one cites unchecked home pages.
+    for (const s of detail.sources) expect(s.source.lastVerifiedAt === null).toBe(s.source.isDemo);
     expect(detail.related.some((r) => r.type === "implements" && r.other.slug === "medallion-architecture")).toBe(true);
   });
 
@@ -83,6 +92,18 @@ describe("knowledge intelligence", () => {
     expect(detail.versions[0]?.snapshot.status).toBe("verified");
   });
 
+  it("reloading the library refreshes untouched items and never overwrites a person's work", async () => {
+    const { seedKnowledge } = await import("@/server/seed/run");
+    const pattern = await knowledge.getItem(alice, "elt-in-warehouse");
+    await knowledge.updateItem(alice, pattern.id, { title: pattern.title, type: "architecture-pattern", summary: "My own wording.", sections: [], attributes: {}, tags: [], sourceType: "internal-experience", confidence: null, expectedVersion: pattern.version, confirmVerifiedEdit: false });
+    const again = await seedKnowledge(alice);
+    expect(again.items).toBe(0);
+    expect(again.refreshed).toBe(0);
+    expect(again.kept).toBeGreaterThanOrEqual(1);
+    expect((await knowledge.getItem(alice, "elt-in-warehouse")).summary).toBe("My own wording.");
+    expect((await knowledge.listItems(alice, { limit: 200 })).total).toBeGreaterThanOrEqual(LIBRARY.items.length);
+  });
+
   it("imports a document into the review queue and refuses duplicates and unsupported files", async () => {
     const content = "# Lakehouse naming conventions\n\nA short guide to naming lakehouse objects.\n\n## Rules\n\nUse lowercase with underscores.\n\n## Examples\n\nbronze_sales_orders";
     const result = await knowledge.importDocument(alice, { fileName: "naming.md", content, type: "best-practice", sourceType: "internal-experience", url: "" });
@@ -98,7 +119,7 @@ describe("knowledge intelligence", () => {
   it("returns a filtered graph and a focused neighbourhood", async () => {
     const all = await knowledge.getGraph(alice);
     expect(all.nodes.length).toBeGreaterThan(40);
-    expect(all.edges.length).toBe(68);
+    expect(all.edges.length).toBe(LIBRARY.relationships.length);
     const fabric = all.nodes.find((n) => n.slug === "microsoft-fabric")!;
     const focused = await knowledge.getGraph(alice, { focusId: fabric.id, depth: 1 });
     expect(focused.nodes.length).toBeLessThan(all.nodes.length);

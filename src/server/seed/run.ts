@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
+import { canonicalJson } from "@/lib/utils";
 import { DEMO_EMAIL } from "../constants";
 import type { Ctx } from "../ctx";
 import { getDb, schema } from "../db";
@@ -76,7 +77,7 @@ export async function seedKnowledge(ctx: Ctx): Promise<{ items: number; refreshe
       kept += 1;
       continue;
     }
-    if (existing.summary === seed.summary && JSON.stringify(existing.sections) === JSON.stringify(seed.sections) && existing.origin === origin) continue;
+    if (existing.summary === seed.summary && canonicalJson(existing.sections) === canonicalJson(seed.sections) && canonicalJson(existing.attributes) === canonicalJson(seed.attributes) && existing.origin === origin) continue;
     // Replace the unedited library text in place; version stays 1 because no person's work is being superseded.
     await updateItem(ctx, existing.id, { ...input, expectedVersion: 1, confirmVerifiedEdit: false });
     await db.update(k).set({ version: 1, origin, isDemo: !seed.researchedOn }).where(eq(k.id, existing.id));
