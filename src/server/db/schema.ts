@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   customType,
   index,
   integer,
@@ -13,6 +14,18 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type {
+  ApprovalStatus,
+  ChecklistItemType,
+  ChecklistStatus,
+  EvidenceType,
+  LifecycleStatus,
+  MilestoneStatus,
+  ReadinessRule,
+  RiskCategory,
+  RiskStatus,
+  StageStatus,
+} from "@/lib/lifecycle";
 import type {
   ApprovalScope,
   ArtifactValidation,
@@ -524,6 +537,252 @@ export const evidenceRecords = pgTable("evidence_records", {
   architectureRevisionId: uuid("architecture_revision_id").references(() => architectureRevisions.id, { onDelete: "restrict" }),
   createdAt: createdAt(),
 });
+
+// ── Project lifecycle ───────────────────────────────────────────────────────
+/** A reusable lifecycle definition. Projects copy it at initialization and never read it again. */
+export const lifecycleTemplates = pgTable(
+  "lifecycle_templates",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    version: integer("version").notNull().default(1),
+    isDefault: boolean("is_default").notNull().default(false),
+    isActive: boolean("is_active").notNull().default(true),
+    /** Null for the built-in template provisioned by the system. */
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("lifecycle_templates_ws_name").on(t.workspaceId, t.name),
+    // At most one active default per workspace.
+    uniqueIndex("lifecycle_templates_ws_default").on(t.workspaceId).where(sql`${t.isDefault} and ${t.isActive}`),
+  ],
+);
+
+export const lifecycleStageDefinitions = pgTable(
+  "lifecycle_stage_definitions",
+  {
+    id: id(),
+    templateId: uuid("template_id").notNull().references(() => lifecycleTemplates.id, { onDelete: "cascade" }),
+    stageKey: text("stage_key").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    sortOrder: integer("sort_order").notNull(),
+    isRequired: boolean("is_required").notNull().default(true),
+    requiresApproval: boolean("requires_approval").notNull().default(true),
+    defaultDurationDays: integer("default_duration_days"),
+    readinessRules: jsonb("readiness_rules").$type<ReadinessRule[]>().notNull().default([]),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("lifecycle_stage_definitions_key").on(t.templateId, t.stageKey), uniqueIndex("lifecycle_stage_definitions_order").on(t.templateId, t.sortOrder)],
+);
+
+export const lifecycleChecklistDefinitions = pgTable(
+  "lifecycle_checklist_definitions",
+  {
+    id: id(),
+    stageDefinitionId: uuid("stage_definition_id").notNull().references(() => lifecycleStageDefinitions.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    sortOrder: integer("sort_order").notNull(),
+    isRequired: boolean("is_required").notNull().default(true),
+    itemType: text("item_type").$type<ChecklistItemType>().notNull().default("task"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("lifecycle_checklist_definitions_stage").on(t.stageDefinitionId, t.sortOrder)],
+);
+
+/** One lifecycle per project. A template in use cannot be deleted (restrict); it can be edited or deactivated because projects hold snapshots. */
+export const projectLifecycles = pgTable(
+  "project_lifecycles",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    templateId: uuid("template_id").notNull().references(() => lifecycleTemplates.id, { onDelete: "restrict" }),
+    templateName: text("template_name").notNull(),
+    templateVersion: integer("template_version").notNull(),
+    status: text("status").$type<LifecycleStatus>().notNull().default("active"),
+    startedAt: ts("started_at"),
+    targetEndAt: ts("target_end_at"),
+    completedAt: ts("completed_at"),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [uniqueIndex("project_lifecycles_project").on(t.projectId), index("project_lifecycles_ws_status").on(t.workspaceId, t.status)],
+);
+
+/** A stage of one project's lifecycle. Name, order, rules and flags are snapshots: later template edits do not reach them. */
+export const projectStageInstances = pgTable(
+  "project_stage_instances",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    projectLifecycleId: uuid("project_lifecycle_id").notNull().references(() => projectLifecycles.id, { onDelete: "cascade" }),
+    stageDefinitionId: uuid("stage_definition_id").references(() => lifecycleStageDefinitions.id, { onDelete: "set null" }),
+    stageKey: text("stage_key").notNull(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    sortOrder: integer("sort_order").notNull(),
+    isRequired: boolean("is_required").notNull(),
+    requiresApproval: boolean("requires_approval").notNull(),
+    defaultDurationDays: integer("default_duration_days"),
+    readinessRules: jsonb("readiness_rules").$type<ReadinessRule[]>().notNull().default([]),
+    status: text("status").$type<StageStatus>().notNull().default("not_started"),
+    ownerId: uuid("owner_id").references(() => users.id),
+    reviewerId: uuid("reviewer_id").references(() => users.id),
+    startAt: ts("start_at"),
+    dueAt: ts("due_at"),
+    completedAt: ts("completed_at"),
+    notes: text("notes").notNull().default(""),
+    blockedReason: text("blocked_reason"),
+    completionNote: text("completion_note"),
+    skipReason: text("skip_reason"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("project_stage_instances_key").on(t.projectLifecycleId, t.stageKey),
+    index("project_stage_instances_ws_status_due").on(t.workspaceId, t.status, t.dueAt),
+    index("project_stage_instances_order").on(t.projectLifecycleId, t.sortOrder),
+  ],
+);
+
+export const projectChecklistItems = pgTable(
+  "project_checklist_items",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    stageInstanceId: uuid("stage_instance_id").notNull().references(() => projectStageInstances.id, { onDelete: "cascade" }),
+    definitionId: uuid("definition_id").references(() => lifecycleChecklistDefinitions.id, { onDelete: "set null" }),
+    /** "template": copied at initialization, cannot be deleted. "custom": added to this project. */
+    origin: text("origin").$type<"template" | "custom">().notNull().default("template"),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    sortOrder: integer("sort_order").notNull(),
+    isRequired: boolean("is_required").notNull(),
+    itemType: text("item_type").$type<ChecklistItemType>().notNull().default("task"),
+    status: text("status").$type<ChecklistStatus>().notNull().default("pending"),
+    assigneeId: uuid("assignee_id").references(() => users.id),
+    dueAt: ts("due_at"),
+    completedAt: ts("completed_at"),
+    completedBy: uuid("completed_by").references(() => users.id),
+    notes: text("notes").notNull().default(""),
+    waivedReason: text("waived_reason"),
+    /** Who last changed the status, and when. */
+    statusChangedBy: uuid("status_changed_by").references(() => users.id),
+    statusChangedAt: ts("status_changed_at"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("project_checklist_items_stage").on(t.stageInstanceId, t.sortOrder), index("project_checklist_items_ws_status_due").on(t.workspaceId, t.status, t.dueAt)],
+);
+
+/** Approval history is kept: a new request is a new row. An approved row is voided, not deleted, when its stage is reopened. */
+export const stageApprovals = pgTable(
+  "stage_approvals",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    stageInstanceId: uuid("stage_instance_id").notNull().references(() => projectStageInstances.id, { onDelete: "restrict" }),
+    status: text("status").$type<ApprovalStatus>().notNull().default("requested"),
+    requestedBy: uuid("requested_by").notNull().references(() => users.id),
+    reviewerId: uuid("reviewer_id").notNull().references(() => users.id),
+    requestNote: text("request_note").notNull().default(""),
+    decisionNote: text("decision_note"),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    requestedAt: ts("requested_at").notNull().defaultNow(),
+    decidedAt: ts("decided_at"),
+    invalidatedAt: ts("invalidated_at"),
+    invalidatedReason: text("invalidated_reason"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("stage_approvals_stage").on(t.stageInstanceId, t.requestedAt),
+    index("stage_approvals_ws_status").on(t.workspaceId, t.status),
+    // One open request per stage.
+    uniqueIndex("stage_approvals_open").on(t.stageInstanceId).where(sql`${t.status} = 'requested'`),
+  ],
+);
+
+/** Append-only references. A wrong reference is marked superseded with a reason; it is never edited or deleted. */
+export const stageEvidence = pgTable(
+  "stage_evidence",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    stageInstanceId: uuid("stage_instance_id").notNull().references(() => projectStageInstances.id, { onDelete: "restrict" }),
+    checklistItemId: uuid("checklist_item_id").references(() => projectChecklistItems.id, { onDelete: "restrict" }),
+    artifactId: uuid("artifact_id").references(() => artifacts.id, { onDelete: "restrict" }),
+    artifactRevisionId: uuid("artifact_revision_id").references(() => artifactRevisions.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    evidenceType: text("evidence_type").$type<EvidenceType>().notNull(),
+    url: text("url"),
+    note: text("note"),
+    supersededAt: ts("superseded_at"),
+    supersededBy: uuid("superseded_by").references(() => users.id),
+    supersededReason: text("superseded_reason"),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    createdAt: createdAt(),
+  },
+  (t) => [index("stage_evidence_stage").on(t.stageInstanceId, t.createdAt)],
+);
+
+export const projectMilestones = pgTable(
+  "project_milestones",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    status: text("status").$type<MilestoneStatus>().notNull().default("planned"),
+    ownerId: uuid("owner_id").references(() => users.id),
+    dueAt: ts("due_at"),
+    completedAt: ts("completed_at"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index("project_milestones_project").on(t.projectId, t.dueAt), index("project_milestones_ws_status_due").on(t.workspaceId, t.status, t.dueAt)],
+);
+
+/** Severity is not stored: it is likelihood × impact, derived on every read. */
+export const projectRisks = pgTable(
+  "project_risks",
+  {
+    id: id(),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    category: text("category").$type<RiskCategory>().notNull().default("delivery"),
+    likelihood: integer("likelihood").notNull(),
+    impact: integer("impact").notNull(),
+    status: text("status").$type<RiskStatus>().notNull().default("open"),
+    ownerId: uuid("owner_id").references(() => users.id),
+    mitigation: text("mitigation").notNull().default(""),
+    dueAt: ts("due_at"),
+    resolvedAt: ts("resolved_at"),
+    createdBy: uuid("created_by").notNull().references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("project_risks_project").on(t.projectId, t.status),
+    index("project_risks_ws_status").on(t.workspaceId, t.status),
+    check("project_risks_likelihood_range", sql`${t.likelihood} between 1 and 5`),
+    check("project_risks_impact_range", sql`${t.impact} between 1 and 5`),
+  ],
+);
 
 // ── Audit ───────────────────────────────────────────────────────────────────
 export const auditEvents = pgTable(

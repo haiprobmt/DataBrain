@@ -25,9 +25,10 @@ export async function listProjects(ctx: Ctx, options: { includeArchived?: boolea
   return getDb()
     .select({
       project: p,
-      requirementCount: sql<number>`(select count(*)::int from ${schema.requirements} r where r.project_id = ${p.id} and r.state = 'known')`,
-      revisionCount: sql<number>`(select count(*)::int from ${schema.architectureRevisions} a where a.project_id = ${p.id})`,
-      approvedVersion: sql<number | null>`(select max(a.version) from ${schema.architectureRevisions} a where a.project_id = ${p.id} and a.status = 'approved')`,
+      // The outer column is written qualified: Drizzle renders `${p.id}` as a bare "id" here, which would bind to the inner table.
+      requirementCount: sql<number>`(select count(*)::int from ${schema.requirements} r where r.project_id = ${p}."id" and r.state = 'known')`,
+      revisionCount: sql<number>`(select count(*)::int from ${schema.architectureRevisions} a where a.project_id = ${p}."id")`,
+      approvedVersion: sql<number | null>`(select max(a.version) from ${schema.architectureRevisions} a where a.project_id = ${p}."id" and a.status = 'approved')`,
     })
     .from(p)
     .where(and(eq(p.workspaceId, ctx.workspaceId), options.includeArchived ? undefined : eq(p.status, "active")))

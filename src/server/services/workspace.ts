@@ -6,13 +6,13 @@ import { getDb, schema } from "../db";
 import { env } from "../env";
 import { forbidden } from "../errors";
 
-export async function recentActivity(ctx: Ctx, options: { limit?: number; projectId?: string } = {}) {
+export async function recentActivity(ctx: Ctx, options: { limit?: number; projectId?: string; actionPrefix?: string } = {}) {
   const e = schema.auditEvents;
   return getDb()
     .select({ id: e.id, action: e.action, entityType: e.entityType, entityId: e.entityId, projectId: e.projectId, summary: e.summary, createdAt: e.createdAt, actor: schema.users.name })
     .from(e)
     .leftJoin(schema.users, eq(schema.users.id, e.actorId))
-    .where(and(eq(e.workspaceId, ctx.workspaceId), options.projectId ? eq(e.projectId, options.projectId) : undefined))
+    .where(and(eq(e.workspaceId, ctx.workspaceId), options.projectId ? eq(e.projectId, options.projectId) : undefined, options.actionPrefix ? sql`starts_with(${e.action}, ${options.actionPrefix})` : undefined))
     .orderBy(desc(e.createdAt))
     .limit(options.limit ?? 12);
 }
@@ -34,7 +34,7 @@ export async function projectStats(ctx: Ctx) {
   const [row] = await getDb()
     .select({
       active: sql<number>`count(*) filter (where ${schema.projects.status} = 'active')::int`,
-      approved: sql<number>`count(*) filter (where exists (select 1 from ${schema.architectureRevisions} a where a.project_id = ${schema.projects.id} and a.status = 'approved'))::int`,
+      approved: sql<number>`count(*) filter (where exists (select 1 from ${schema.architectureRevisions} a where a.project_id = ${schema.projects}."id" and a.status = 'approved'))::int`,
     })
     .from(schema.projects)
     .where(eq(schema.projects.workspaceId, ctx.workspaceId));

@@ -5,6 +5,7 @@ import { DEMO_EMAIL } from "../constants";
 import type { Ctx } from "../ctx";
 import { getDb, schema } from "../db";
 import { addRelationship, createItem, updateItem } from "../services/knowledge";
+import { ensureDefaultLifecycleTemplate } from "../services/lifecycle-templates";
 import { createProject } from "../services/projects";
 import { DEMO_PROJECT } from "./content";
 import { LIBRARY } from "./library";
@@ -21,7 +22,10 @@ export async function ensureWorkspace(input: { email: string; name: string; work
     [membership] = await db.insert(schema.memberships).values({ userId: user!.id, workspaceId, role: input.role ?? "owner" }).returning();
   }
   const [workspace] = await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, workspaceId)).limit(1);
-  return { userId: user!.id, userName: user!.name, userEmail: user!.email, workspaceId, workspaceName: workspace!.name, role: membership!.role, isDemo: workspace!.isDemo, correlationId: randomUUID() };
+  const ctx: Ctx = { userId: user!.id, userName: user!.name, userEmail: user!.email, workspaceId, workspaceName: workspace!.name, role: membership!.role, isDemo: workspace!.isDemo, correlationId: randomUUID() };
+  // Every workspace gets the built-in lifecycle template; workspaces that predate it are provisioned lazily on first use.
+  await ensureDefaultLifecycleTemplate(ctx);
+  return ctx;
 }
 
 const SEEDED_ORIGINS = ["demo-seed", "ai-researched"];
